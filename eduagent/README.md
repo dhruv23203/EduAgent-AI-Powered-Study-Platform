@@ -380,20 +380,6 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - LangChain for AI agent capabilities
 - The open-source community for amazing tools and libraries
 
-## 📞 Support
-
-For support, email support@eduagent.com or open an issue on GitHub.
-
-## 🗺️ Roadmap
-
-- [ ] Mobile app (iOS/Android)
-- [ ] Advanced analytics dashboard
-- [ ] Integration with popular LMS platforms
-- [ ] Offline mode support
-- [ ] Multi-language support
-- [ ] Advanced AI models integration
-- [ ] Gamification features
-- [ ] Social learning features
 
 ---
 

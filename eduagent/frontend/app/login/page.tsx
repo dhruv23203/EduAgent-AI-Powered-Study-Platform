@@ -28,6 +28,19 @@ const promiseCards = [
   { title: "Badges", value: "Earned", icon: Trophy }
 ];
 
+function passwordStrength(password: string) {
+  const checks = [
+    { label: "8+ characters", passed: password.length >= 8 },
+    { label: "Uppercase", passed: /[A-Z]/.test(password) },
+    { label: "Number", passed: /\d/.test(password) },
+    { label: "Symbol", passed: /[^A-Za-z0-9]/.test(password) }
+  ];
+  const score = checks.filter((item) => item.passed).length;
+  const labels = ["Too weak", "Weak", "Okay", "Strong", "Excellent"];
+  const bars = ["w-[8%] bg-coral", "w-1/4 bg-coral", "w-1/2 bg-amber", "w-3/4 bg-fern", "w-full bg-fern"];
+  return { checks, score, label: labels[score], bar: bars[score] };
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const [mode, setMode] = useState<"signup" | "login">("signup");
@@ -37,6 +50,7 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const strength = passwordStrength(password);
 
   useEffect(() => {
     logout();
@@ -216,8 +230,8 @@ export default function LoginPage() {
               <label className="block">
                 <span className="text-sm font-black">Name</span>
                 <div className="relative mt-2">
-                  <User className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-ink/35 dark:text-white/35" />
-                  <input value={name} onChange={(e) => setName(e.target.value)} className="auth-input pl-12" required />
+                  {!name ? <User className="pointer-events-none absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2 text-ink/35 transition dark:text-white/35" /> : null}
+                  <input value={name} onChange={(e) => setName(e.target.value)} className={`auth-input ${name ? "pl-4" : "pl-16"}`} placeholder="Your name" required />
                 </div>
               </label>
             ) : null}
@@ -225,20 +239,21 @@ export default function LoginPage() {
             <label className="block">
               <span className="text-sm font-black">Email</span>
               <div className="relative mt-2">
-                <Mail className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-ink/35 dark:text-white/35" />
-                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="auth-input pl-12" required />
+                {!email ? <Mail className="pointer-events-none absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2 text-ink/35 transition dark:text-white/35" /> : null}
+                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={`auth-input ${email ? "pl-4" : "pl-16"}`} placeholder="you@example.com" required />
               </div>
             </label>
 
             <label className="block">
               <span className="text-sm font-black">Password</span>
               <div className="relative mt-2">
-                <LockKeyhole className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-ink/35 dark:text-white/35" />
+                {!password ? <LockKeyhole className="pointer-events-none absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2 text-ink/35 transition dark:text-white/35" /> : null}
                 <input
                   type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="auth-input pl-12 pr-12"
+                  className={`auth-input pr-12 ${password ? "pl-4" : "pl-16"}`}
+                  placeholder="Minimum 6 characters"
                   required
                   minLength={6}
                 />
@@ -251,14 +266,25 @@ export default function LoginPage() {
                   {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                 </button>
               </div>
+              {mode === "signup" && password ? (
+                <div className="mt-3 rounded-lg border border-ink/10 bg-[#f8faf9] p-3 dark:border-white/10 dark:bg-white/5">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs font-black uppercase tracking-[0.16em] text-ink/45 dark:text-white/45">Password strength</span>
+                    <span className="text-sm font-black text-fern">{strength.label}</span>
+                  </div>
+                  <div className="mt-2 h-2 overflow-hidden rounded-full bg-ink/10 dark:bg-white/10">
+                    <div className={`h-full rounded-full transition-all ${strength.bar}`} />
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs font-bold text-ink/58 dark:text-white/58">
+                    {strength.checks.map((check) => (
+                      <span key={check.label} className={check.passed ? "text-fern dark:text-emerald-200" : ""}>
+                        {check.label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </label>
-          </div>
-
-          <div className="mt-5 rounded-lg border border-fern/15 bg-fern/10 p-3 dark:border-emerald-200/10 dark:bg-white/5">
-            <div className="flex items-center gap-2 text-sm font-bold text-ink/70 dark:text-white/72">
-              <CheckCircle2 className="h-5 w-5 text-fern dark:text-emerald-200" />
-              Progress, badges, and plans persist after project restarts.
-            </div>
           </div>
 
           <button disabled={loading} className="focus-ring group mt-5 inline-flex h-14 w-full items-center justify-center gap-2 rounded-lg bg-ink px-5 font-black text-white shadow-soft transition hover:-translate-y-0.5 hover:bg-fern disabled:translate-y-0 disabled:opacity-60 dark:bg-fern dark:hover:bg-skydeep">

@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from agents.weakness_agent import WeaknessAgent, feedback_items, mistake_insights
+from agents.weakness_agent import WeaknessAgent, feedback_items, groq_progress_feedback, mistake_insights
 from db.database import get_db
 from db.models import QuizAttempt, StreakRecovery, Student, StudyPlan, StudyTaskCompletion
 from models.schemas import HeatmapDay, ProgressResponse
@@ -28,6 +28,9 @@ def get_progress(student_id: str, db: Session = Depends(get_db)) -> ProgressResp
     activity = _activity_summary(db, student_id, attempts)
     streak = _streak(activity["completed_dates"], activity["recovered_dates"])
     mistakes = mistake_insights(attempts)
+    groq_feedback = groq_progress_feedback(attempts, weakness, mistakes)
+    insight = groq_feedback[0] if groq_feedback else weakness.insight
+    feedback = groq_feedback[1] if groq_feedback else feedback_items(weakness.accuracy_by_topic, mistakes)
     return ProgressResponse(
         overall_accuracy=round((correct / total) * 100, 2) if total else 0,
         topics_covered=sorted({item.topic for item in attempts}),
@@ -37,11 +40,11 @@ def get_progress(student_id: str, db: Session = Depends(get_db)) -> ProgressResp
         streak_days=streak,
         total_questions_attempted=total,
         accuracy_by_topic=weakness.accuracy_by_topic,
-        insight=weakness.insight,
+        insight=insight,
         history=_history(attempts),
         heatmap=_heatmap(student, _latest_plan(db, student_id), activity),
         mistakes=mistakes,
-        feedback=feedback_items(weakness.accuracy_by_topic, mistakes),
+        feedback=feedback,
         rewards=summary_for_user(db, student_id, streak),
     )
 
@@ -77,17 +80,20 @@ def _history(attempts: list[QuizAttempt]) -> list[dict[str, str | int | float]]:
 
 def _activity_summary(db: Session, student_id: str, attempts: list[QuizAttempt]) -> dict[str, Any]:
     quiz_by_date: dict[date, dict[str, int]] = defaultdict(lambda: {"correct": 0, "total": 0})
+    quiz_runs_by_date: dict[date, set[str]] = defaultdict(set)
     for attempt in attempts:
         key = local_date(attempt.attempted_at)
         quiz_by_date[key]["total"] += 1
         quiz_by_date[key]["correct"] += int(attempt.is_correct)
+        run_id = attempt.quiz_run_id or f"legacy-{attempt.attempted_at.replace(microsecond=0).isoformat()}"
+        quiz_runs_by_date[key].add(run_id)
     task_types: dict[date, set[str]] = defaultdict(set)
     for task_date, task_type in db.query(StudyTaskCompletion.task_date, StudyTaskCompletion.task_type).filter(StudyTaskCompletion.student_id == student_id).all():
         task_types[task_date].add(task_type)
     recovered = {row[0] for row in db.query(StreakRecovery.recovered_date).filter(StreakRecovery.user_id == student_id).all()}
     candidates = set(quiz_by_date) | set(task_types)
-    completed = {d for d in candidates if {"concepts", "practice"}.issubset(task_types.get(d, set())) and quiz_by_date.get(d, {"total": 0})["total"] >= 3}
-    return {"quiz_by_date": quiz_by_date, "task_types": task_types, "completed_dates": completed, "recovered_dates": recovered}
+    completed = {d for d in candidates if {"concepts", "practice"}.issubset(task_types.get(d, set())) and len(quiz_runs_by_date.get(d, set())) >= 3}
+    return {"quiz_by_date": quiz_by_date, "quiz_runs_by_date": quiz_runs_by_date, "task_types": task_types, "completed_dates": completed, "recovered_dates": recovered}
 
 
 def _streak(completed: set[date], recovered: set[date]) -> int:
@@ -111,8 +117,9 @@ def _heatmap(student: Student, plan: StudyPlan | None, activity: dict[str, Any])
     current = start
     while current <= end:
         values = activity["quiz_by_date"].get(current, {"correct": 0, "total": 0})
+        quiz_count = len(activity["quiz_runs_by_date"].get(current, set()))
         tasks = activity["task_types"].get(current, set())
-        count = int("concepts" in tasks) + int("practice" in tasks) + min(values["total"], 3)
+        count = int("concepts" in tasks) + int("practice" in tasks) + min(quiz_count, 3)
         rows.append(
             HeatmapDay(
                 date=current.isoformat(),

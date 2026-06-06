@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
+from agents.fallbacks import sanitize_document_text
 from db.database import get_db
 from db.models import Student
 from models.schemas import UploadResponse
@@ -20,8 +21,16 @@ async def upload_pdf(kind: str, student_id: str = Form(...), file: UploadFile = 
         db.commit()
         db.refresh(student)
     data = await file.read()
-    parsed = extract_pdf_text(data)
-    text = parsed.text or file.filename or ""
+    try:
+        parsed = extract_pdf_text(data)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    text = sanitize_document_text(parsed.text)
+    if len(text) < 40:
+        raise HTTPException(
+            status_code=422,
+            detail="Could not extract readable syllabus/notes text from this file. Upload a text-based PDF or a .txt file, then generate the plan again.",
+        )
     if kind == "syllabus":
         student.syllabus_text = text
     else:

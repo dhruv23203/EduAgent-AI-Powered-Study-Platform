@@ -61,6 +61,7 @@ class QuizAttempt(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     student_id: Mapped[str] = mapped_column(Text, ForeignKey("students.id"), index=True, nullable=False)
     plan_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("study_plans.id"), index=True, nullable=True)
+    quiz_run_id: Mapped[str | None] = mapped_column(Text, index=True, nullable=True)
     question_id: Mapped[str] = mapped_column(Text, index=True, nullable=False)
     topic: Mapped[str] = mapped_column(Text, index=True, nullable=False)
     subtopic: Mapped[str | None] = mapped_column(Text, nullable=True)

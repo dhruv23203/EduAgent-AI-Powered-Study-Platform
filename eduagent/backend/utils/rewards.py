@@ -23,11 +23,16 @@ def _save_badges(user: User, badges: list[str]) -> None:
 
 
 def quiz_count_for_date(db: Session, student_id: str, task_date: date, plan_id: int | None = None) -> int:
-    query = db.query(QuizAttempt.attempted_at).filter(QuizAttempt.student_id == student_id)
+    query = db.query(QuizAttempt.quiz_run_id, QuizAttempt.attempted_at).filter(QuizAttempt.student_id == student_id)
     if plan_id is not None:
         query = query.filter(QuizAttempt.plan_id == plan_id)
     rows = query.all()
-    return sum(1 for row in rows if local_date(row[0]) == task_date)
+    runs = {
+        run_id or f"legacy-{attempted_at.replace(microsecond=0).isoformat()}"
+        for run_id, attempted_at in rows
+        if attempted_at and local_date(attempted_at) == task_date
+    }
+    return len(runs)
 
 
 def completed_task_types(db: Session, student_id: str, task_date: date, plan_id: int | None = None) -> set[str]:

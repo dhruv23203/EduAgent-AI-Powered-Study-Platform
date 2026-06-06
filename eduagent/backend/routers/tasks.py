@@ -4,7 +4,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from agents.fallbacks import resources_for_topic
+from agents.fallbacks import looks_like_pdf_noise, resources_for_topic
 from db.database import get_db
 from db.models import Student, StudyPlan, StudyTaskCompletion
 from models.schemas import DailyTaskStatus, TaskCompleteRequest
@@ -68,8 +68,21 @@ def _session_for_date(db: Session, student_id: str, task_date: date, plan_id: in
     payload = json.loads(plan.plan_json)
     for day in payload.get("plan", []):
         if day.get("date") == task_date.isoformat() and day.get("sessions"):
-            return day["sessions"][0]
+            session = _first_clean_session(day.get("sessions", []))
+            if session:
+                return session
     for day in payload.get("plan", []):
         if day.get("sessions"):
-            return day["sessions"][0]
+            session = _first_clean_session(day.get("sessions", []))
+            if session:
+                return session
+    return {}
+
+
+def _first_clean_session(sessions: list[dict]) -> dict:
+    for session in sessions:
+        topic = str(session.get("topic", ""))
+        subtopic = str(session.get("subtopic", ""))
+        if not looks_like_pdf_noise(topic) and not looks_like_pdf_noise(subtopic or topic):
+            return session
     return {}

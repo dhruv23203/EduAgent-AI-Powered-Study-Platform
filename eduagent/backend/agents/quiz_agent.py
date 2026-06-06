@@ -1,25 +1,75 @@
 import json
+import re
 import uuid
 
 from sqlalchemy.orm import Session
 
-from agents.fallbacks import allow_quiz_fallback
+from agents.fallbacks import allow_quiz_fallback, sanitize_document_text
 from agents.llm import AgentError, LLMJSONClient
-from db.models import QuizQuestion as StoredQuestion
+from db.models import QuizQuestion as StoredQuestion, Student, StudyPlan
 from models.schemas import GenerateQuizRequest, QuizQuestion
 
 SYSTEM_PROMPT = """You generate exam-quality multiple choice quizzes.
 Return only a JSON array. Each item must contain: question, options {A,B,C,D}, correct_answer, explanation, difficulty.
-Questions must test the actual topic content, not generic study planning."""
+Questions must test the exact daily topic and subtopic content, not generic study planning.
+Every question must be new, specific, and answerable from the named topic/subtopic.
+Do not repeat wording, examples, or concepts from the previous questions list."""
+
+
+def _fingerprint(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+
+def _relevant_excerpt(text: str, topic: str, subtopic: str, limit: int = 1600) -> str:
+    cleaned = sanitize_document_text(text)
+    if not cleaned:
+        return ""
+    terms = [term.lower() for term in {topic, subtopic, *topic.split(), *subtopic.split()} if len(term.strip()) >= 4]
+    lines = cleaned.splitlines()
+    selected = [line for line in lines if any(term in line.lower() for term in terms)]
+    excerpt = "\n".join(selected[:24]) or cleaned[:limit]
+    return excerpt[:limit]
+
+
+def _plan_context(db: Session, payload: GenerateQuizRequest) -> str:
+    if payload.plan_id is None:
+        return ""
+    plan = db.query(StudyPlan).filter(StudyPlan.id == payload.plan_id, StudyPlan.student_id == payload.student_id).first()
+    if plan is None:
+        return ""
+    try:
+        data = json.loads(plan.plan_json)
+    except json.JSONDecodeError:
+        return ""
+    matches = []
+    for day in data.get("plan", []):
+        for session in day.get("sessions", []):
+            topic = str(session.get("topic", ""))
+            subtopic = str(session.get("subtopic", ""))
+            if topic == payload.topic or subtopic == payload.subtopic:
+                matches.append(
+                    {
+                        "date": day.get("date"),
+                        "topic": topic,
+                        "subtopic": subtopic,
+                        "activity": session.get("activity"),
+                        "focus_points": session.get("focus_points", []),
+                    }
+                )
+    return json.dumps(matches[:3], ensure_ascii=False)
 
 
 def _local_questions(payload: GenerateQuizRequest) -> list[QuizQuestion]:
+    focus = payload.subtopic or payload.topic
     stems = [
-        f"Which statement best describes {payload.subtopic or payload.topic}?",
-        f"What is a common edge case in {payload.subtopic or payload.topic}?",
-        f"Which approach is usually efficient for {payload.topic} problems?",
-        f"What should be verified after solving a {payload.topic} question?",
-        f"Which mistake most often causes wrong answers in {payload.subtopic or payload.topic}?",
+        f"In {payload.topic}, which statement most accurately explains {focus}?",
+        f"While solving a {payload.topic} problem on {focus}, which edge case must be checked first?",
+        f"Which practice approach best builds accuracy for {focus} in {payload.topic}?",
+        f"After completing a {focus} question, what verification step best catches mistakes?",
+        f"Which error pattern most often causes wrong answers in {focus}?",
+        f"Which example would best prove that you understand {focus}?",
+        f"What should be compared when two answer choices both mention {focus}?",
+        f"Which revision note is most useful after missing a {payload.topic} question about {focus}?",
     ]
     rows = []
     for index in range(payload.count):
@@ -47,30 +97,54 @@ def generate_quiz(db: Session, payload: GenerateQuizRequest) -> list[QuizQuestio
     recent_query = db.query(StoredQuestion.question_text).filter(StoredQuestion.student_id == payload.student_id, StoredQuestion.topic == payload.topic)
     if payload.plan_id is not None:
         recent_query = recent_query.filter(StoredQuestion.plan_id == payload.plan_id)
-    recent_rows = recent_query.order_by(StoredQuestion.created_at.desc()).limit(15).all()
+    recent_rows = recent_query.order_by(StoredQuestion.created_at.desc()).limit(8).all()
+    student = db.get(Student, payload.student_id)
+    syllabus_excerpt = _relevant_excerpt(student.syllabus_text or "", payload.topic, payload.subtopic) if student else ""
+    notes_excerpt = _relevant_excerpt(student.notes_text or "", payload.topic, payload.subtopic) if student else ""
+    plan_context = _plan_context(db, payload)
     prompt = (
-        f"Topic: {payload.topic}\nSubtopic: {payload.subtopic}\nDifficulty: {payload.difficulty}\n"
+        f"Student daily topic: {payload.topic}\nDaily subtopic: {payload.subtopic}\nDifficulty: {payload.difficulty}\n"
+        f"Daily plan context: {plan_context or 'No matching plan context found.'}\n"
+        f"Relevant syllabus excerpt:\n{syllabus_excerpt or 'No readable matching syllabus excerpt.'}\n\n"
+        f"Relevant notes excerpt:\n{notes_excerpt or 'No readable matching notes excerpt.'}\n\n"
         f"Count: {payload.count}\nAvoid these previous questions: {[row[0] for row in recent_rows]}\n"
-        "Make every question specific, fresh, and technically meaningful."
+        "Generate exactly Count questions. Keep all questions strictly about the daily topic/subtopic. "
+        "Use the syllabus/notes excerpts as the source of truth whenever they are present. "
+        "Each option must be plausible and each explanation must name why the correct answer is correct."
     )
-    client = LLMJSONClient(max_tokens=2500)
+    client = LLMJSONClient(max_tokens=1700)
     questions: list[QuizQuestion] = []
     if client.available:
         try:
             raw = client.complete_json(SYSTEM_PROMPT, prompt, temperature=0.75)
             if not isinstance(raw, list):
                 raise AgentError("Quiz JSON was not a list.")
-            for item in raw[: payload.count]:
+            used = {_fingerprint(row[0]) for row in recent_rows}
+            for item in raw:
                 item["id"] = uuid.uuid4().hex
                 item["topic"] = payload.topic
                 item["subtopic"] = payload.subtopic
                 item["difficulty"] = item.get("difficulty") or payload.difficulty
-                questions.append(QuizQuestion.model_validate(item))
-        except Exception:
-            if not allow_quiz_fallback():
+                question = QuizQuestion.model_validate(item)
+                marker = _fingerprint(question.question)
+                if marker and marker not in used:
+                    used.add(marker)
+                    questions.append(question)
+                if len(questions) >= payload.count:
+                    break
+        except Exception as exc:
+            if _is_rate_limited(exc) or allow_quiz_fallback():
+                questions = _local_questions(payload)
+            else:
                 raise
+    elif not allow_quiz_fallback():
+        raise AgentError("Groq API key is not configured. Quiz generation requires Groq.")
     if not questions:
         questions = _local_questions(payload)
+    elif len(questions) < payload.count and allow_quiz_fallback():
+        questions.extend(_local_questions(payload)[: payload.count - len(questions)])
+    elif len(questions) < payload.count:
+        raise AgentError("Groq did not return enough unique quiz questions. Please generate again.")
     for question in questions:
         db.add(
             StoredQuestion(
@@ -88,3 +162,8 @@ def generate_quiz(db: Session, payload: GenerateQuizRequest) -> list[QuizQuestio
         )
     db.commit()
     return questions
+
+
+def _is_rate_limited(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "rate_limit" in text or "rate limit" in text or "tokens per day" in text or "try again" in text

@@ -45,7 +45,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen bg-[#f4f7f5] text-ink dark:bg-[#0f1720] dark:text-white">
-      <aside className="fixed inset-y-0 left-0 z-20 hidden w-72 flex-col border-r border-white/10 bg-ink px-5 py-5 text-white lg:flex">
+      <aside className="fixed inset-y-0 left-0 z-20 hidden w-72 flex-col overflow-y-auto border-r border-white/10 bg-ink px-5 py-5 text-white lg:flex">
         <Link href="/plans" className="focus-ring flex items-center gap-3 rounded-lg px-2 py-2">
           <span className="grid h-11 w-11 place-items-center rounded-lg bg-fern text-white shadow-soft"><GraduationCap className="h-5 w-5" /></span>
           <span><span className="block text-xl font-black">EduAgent</span><span className="text-sm text-white/60">Study cockpit</span></span>

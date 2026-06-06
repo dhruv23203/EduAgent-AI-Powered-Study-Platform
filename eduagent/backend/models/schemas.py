@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -154,7 +154,7 @@ class QuizSubmitResponse(BaseModel):
     score: float
     correct: int
     wrong: int
-    explanations: list[dict[str, str | bool]]
+    explanations: list[dict[str, Any]]
     updated_weak_areas: list[str]
     rewards: RewardSummary | None = None
 

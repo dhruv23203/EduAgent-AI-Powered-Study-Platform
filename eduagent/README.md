@@ -1,400 +1,246 @@
-# EduAgent: AI-Powered Study Platform
+# EduAgent
 
-An intelligent, AI-powered educational platform designed to enhance learning experiences through personalized study recommendations, adaptive quizzes, career guidance, and real-time progress tracking. EduAgent leverages cutting-edge AI agents to provide a comprehensive learning ecosystem.
+EduAgent is a FastAPI + Next.js study platform with login, study plans, quizzes, progress tracking, revision, career guidance, rewards, file upload, and AI-backed chat features.
 
-## 📋 Table of Contents
+## Tech Stack
 
-- [Features](#features)
-- [Tech Stack](#tech-stack)
-- [Project Structure](#project-structure)
-- [Installation](#installation)
-- [Backend Setup](#backend-setup)
-- [Frontend Setup](#frontend-setup)
-- [Development](#development)
-- [API Documentation](#api-documentation)
-- [Contributing](#contributing)
-- [License](#license)
+- Backend: Python, FastAPI, Uvicorn, SQLAlchemy, SQLite
+- Frontend: Next.js 14, React 18, TypeScript, Tailwind CSS
+- AI provider: Groq-compatible chat completion API through `backend/agents/llm.py`
 
-## ✨ Features
+## Project Structure
 
-### Core Learning Features
-- **📚 Smart Study Plans**: AI-generated personalized study plans based on learning goals and pace
-- **🤖 AI Chat Agent**: Intelligent conversational AI tutor for real-time learning assistance
-- **📝 Adaptive Quizzes**: Dynamic quiz generation with AI-powered question adaptation
-- **📊 Progress Tracking**: Real-time dashboard showing learning progress and performance metrics
-- **🎯 Career Guidance**: AI-driven career path recommendations based on skills and interests
-- **🔄 Revision System**: Spaced repetition and intelligent revision scheduling
-- **🔐 User Authentication**: Secure login and profile management system
-
-### Platform Features
-- **Responsive Design**: Works seamlessly on desktop, tablet, and mobile devices
-- **Real-time Updates**: Live progress updates and notifications
-- **Persistent Storage**: SQLite database for reliable data persistence
-- **Scalable Architecture**: Modular design for easy feature additions
-
-## 🛠️ Tech Stack
-
-### Backend
-- **Framework**: Python FastAPI
-- **Database**: SQLite (expandable to PostgreSQL/MongoDB)
-- **Agent Framework**: LangChain / Custom AI Agents
-- **API Style**: RESTful with WebSocket support for real-time features
-- **Authentication**: JWT-based token authentication
-
-### Frontend
-- **Framework**: Next.js (React)
-- **Styling**: Tailwind CSS / Material-UI
-- **State Management**: Redux / Zustand
-- **Type Safety**: TypeScript
-- **Real-time Communication**: WebSocket for live updates
-
-## 📁 Project Structure
-
-```
+```text
 eduagent/
-├── backend/                           # Backend server code
-│   ├── agents/                        # AI agent implementations
-│   │   ├── study_agent.py            # Study plan generation agent
-│   │   ├── tutor_agent.py            # Conversational tutoring agent
-│   │   └── career_agent.py           # Career guidance agent
-│   ├── db/                           # Database models and migrations
-│   │   ├── models.py                 # SQLAlchemy/ORM models
-│   │   ├── database.py               # Database connection setup
-│   │   └── migrations/               # Database migration scripts
-│   ├── models/                       # Data models and schemas
-│   │   ├── user.py                   # User model
-│   │   ├── study_plan.py             # Study plan model
-│   │   ├── quiz.py                   # Quiz and question models
-│   │   └── progress.py               # Progress tracking model
-│   ├── routers/                      # API route handlers
-│   │   ├── auth.py                   # Authentication endpoints
-│   │   ├── user.py                   # User management endpoints
-│   │   ├── study.py                  # Study plan endpoints
-│   │   ├── quiz.py                   # Quiz endpoints
-│   │   ├── progress.py               # Progress tracking endpoints
-│   │   ├── chat.py                   # Chat/tutoring endpoints
-│   │   └── career.py                 # Career guidance endpoints
-│   ├── memory/                       # Memory management for agents
-│   │   ├── user_memory.py            # User interaction memory
-│   │   └── agent_memory.py           # Agent conversation history
-│   ├── utils/                        # Utility functions
-│   │   ├── auth_utils.py             # Authentication utilities
-│   │   ├── ai_utils.py               # AI/LLM utilities
-│   │   └── validation.py             # Data validation utilities
-│   ├── main.py                       # Application entry point
-│   ├── config.py                     # Configuration settings
-│   └── requirements.txt              # Python dependencies
-│
-├── frontend/                          # Frontend application
-│   ├── app/                          # Next.js app router directory
-│   │   ├── login/                    # Authentication pages
-│   │   │   ├── page.tsx
-│   │   │   └── layout.tsx
-│   │   ├── setup/                    # Initial setup/onboarding
-│   │   │   ├── page.tsx
-│   │   │   └── layout.tsx
-│   │   ├── dashboard/                # Main dashboard
-│   │   │   ├── page.tsx
-│   │   │   └── layout.tsx
-│   │   ├── plans/                    # Study plans
-│   │   │   ├── page.tsx
-│   │   │   ├── [id]/
-│   │   │   └── layout.tsx
-│   │   ├── chat/                     # AI chat interface
-│   │   │   ├── page.tsx
-│   │   │   └── layout.tsx
-│   │   ├── quiz/                     # Quiz interface
-│   │   │   ├── page.tsx
-│   │   │   └── layout.tsx
-│   │   ├── progress/                 # Progress tracking
-│   │   │   ├── page.tsx
-│   │   │   └── layout.tsx
-│   │   ├── revision/                 # Revision system
-│   │   │   ├── page.tsx
-│   │   │   └── layout.tsx
-│   │   ├── career/                   # Career guidance
-│   │   │   ├── page.tsx
-│   │   │   └── layout.tsx
-│   │   ├── layout.tsx                # Root layout
-│   │   └── page.tsx                  # Root page
-│   ├── components/                   # Reusable React components
-│   │   ├── Header.tsx
-│   │   ├── Sidebar.tsx
-│   │   ├── StudyPlanCard.tsx
-│   │   ├── QuizCard.tsx
-│   │   ├── ProgressChart.tsx
-│   │   ├── ChatWindow.tsx
-│   │   └── ...
-│   ├── lib/                          # Utility functions and hooks
-│   │   ├── api.ts                    # API client
-│   │   ├── hooks/                    # Custom React hooks
-│   │   ├── auth.ts                   # Authentication logic
-│   │   └── utils.ts                  # Helper functions
-│   ├── public/                       # Static assets
-│   ├── package.json                  # NPM dependencies
-│   ├── tailwind.config.js            # Tailwind CSS configuration
-│   ├── tsconfig.json                 # TypeScript configuration
-│   └── .env.local                    # Local environment variables
-│
-├── .gitignore                        # Git ignore rules
-├── .env.example                      # Example environment variables
-├── docker-compose.yml                # Docker setup (optional)
-└── README.md                         # This file
+  backend/
+    main.py
+    requirements.txt
+    .env.example
+    db/
+    routers/
+    agents/
+  frontend/
+    package.json
+    .env.example
+    app/
+    components/
+    lib/
+  README.md
 ```
 
-## 🚀 Installation
+## Prerequisites
 
-### Prerequisites
-- Python 3.9+ (for backend)
-- Node.js 16+ (for frontend)
-- npm or yarn package manager
-- SQLite 3 (usually pre-installed)
+Install these before running the project:
 
-### Clone the Repository
+- Python 3.10 or newer
+- Node.js 18.17 or newer
+- npm
 
-```bash
-git clone https://github.com/dhruv23203/EduAgent-AI-Powered-Study-Platform.git
-cd EduAgent-AI-Powered-Study-Platform
+This workspace was verified with:
+
+```powershell
+python --version
+node --version
+npm --version
 ```
 
-## 🔧 Backend Setup
+Verified versions: Python 3.13.5, Node.js 22.14.0, npm 10.9.2.
 
-### 1. Create Virtual Environment
+## 1. Open The Project
 
-```bash
+In PowerShell, go to the repository folder:
+
+```powershell
+cd "C:\Users\Dhruv malhan\Desktop\New folder (4)\New folder\eduagent"
+```
+
+If you cloned the project somewhere else, use that `eduagent` folder path instead.
+
+## 2. Start The Backend
+
+Open the first PowerShell terminal:
+
+```powershell
 cd backend
 python -m venv venv
-# On Windows:
-venv\Scripts\activate
-# On macOS/Linux:
-source venv/bin/activate
-```
-
-### 2. Install Dependencies
-
-```bash
+.\venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 3. Environment Configuration
+Create the backend environment file:
 
-```bash
-cp .env.example .env
-# Edit .env with your configuration:
-# - Database URL
-# - API keys (OpenAI, etc.)
-# - Secret keys
-# - Server port
+```powershell
+if (!(Test-Path .env)) { Copy-Item .env.example .env }
 ```
 
-### 4. Database Setup
+For local development, the defaults in `backend\.env.example` are enough to start the server. To enable real AI responses, edit `backend\.env` and set:
 
-```bash
-python -m alembic upgrade head  # Apply migrations (if using Alembic)
-# or
-python db/init_db.py            # Initialize database
+```text
+GROQ_API_KEY=your_groq_api_key
+GROQ_API_KEY_2=optional_backup_groq_api_key
 ```
 
-### 5. Run Backend Server
+If one Groq key reaches its rate limit, EduAgent automatically tries the next configured key. You can also use a single comma-separated value:
 
-```bash
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```text
+GROQ_API_KEYS=groq_key_one,groq_key_two
 ```
 
-Backend will be available at `http://localhost:8000`
+Run the backend:
 
-## 🎨 Frontend Setup
+```powershell
+python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
+```
 
-### 1. Install Dependencies
+Backend URLs:
 
-```bash
+- API root: `http://127.0.0.1:8000`
+- Health check: `http://127.0.0.1:8000/api/health`
+- Swagger docs: `http://127.0.0.1:8000/docs`
+- ReDoc: `http://127.0.0.1:8000/redoc`
+
+The SQLite database is created automatically at `backend\eduagent.db` when the backend starts. You do not need to run Alembic migrations or a separate database init script.
+
+## 3. Start The Frontend
+
+Open a second PowerShell terminal:
+
+```powershell
+cd "C:\Users\Dhruv malhan\Desktop\New folder (4)\New folder\eduagent"
 cd frontend
 npm install
-# or
-yarn install
 ```
 
-### 2. Environment Configuration
+Create the frontend environment file:
 
-```bash
-cp .env.example .env.local
-# Edit .env.local with:
-# - NEXT_PUBLIC_API_URL=http://localhost:8000
-# - Other API keys and configuration
+```powershell
+if (!(Test-Path .env.local)) { Copy-Item .env.example .env.local }
 ```
 
-### 3. Run Development Server
+Make sure `frontend\.env.local` contains:
 
-```bash
-npm run dev
-# or
-yarn dev
+```text
+NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
 
-Frontend will be available at `http://localhost:3000`
+Google login is optional. If you want it, also set:
 
-## 💻 Development
+```text
+NEXT_PUBLIC_GOOGLE_CLIENT_ID=your_google_oauth_web_client_id
+```
 
-### Running Both Services
+Run the frontend:
 
-Create a terminal session at the project root:
-
-```bash
-# Terminal 1: Backend
-cd backend
-source venv/bin/activate  # or venv\Scripts\activate on Windows
-uvicorn main:app --reload
-
-# Terminal 2: Frontend
-cd frontend
+```powershell
 npm run dev
 ```
 
-### API Documentation
+Frontend URL:
 
-Once the backend is running, visit:
-- Swagger UI: `http://localhost:8000/docs`
-- ReDoc: `http://localhost:8000/redoc`
+- App: `http://localhost:3000`
 
-### Key API Endpoints
+## 4. Check That Everything Is Running
 
-#### Authentication
-- `POST /api/auth/register` - User registration
-- `POST /api/auth/login` - User login
-- `POST /api/auth/logout` - User logout
+With both terminals still running, open:
 
-#### Study Plans
-- `GET /api/study-plans` - Get all user study plans
-- `POST /api/study-plans` - Create new study plan
-- `GET /api/study-plans/{id}` - Get specific study plan
-- `PUT /api/study-plans/{id}` - Update study plan
+```text
+http://localhost:3000
+```
 
-#### Quiz
-- `GET /api/quizzes` - Get all quizzes
-- `POST /api/quizzes` - Create new quiz
-- `GET /api/quizzes/{id}` - Get quiz details
-- `POST /api/quizzes/{id}/submit` - Submit quiz answers
+You can also verify the backend from PowerShell:
 
-#### Chat/Tutoring
-- `WebSocket /ws/chat/{user_id}` - Real-time chat with AI tutor
-- `POST /api/chat/history` - Get chat history
+```powershell
+Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8000/api/health
+```
 
-#### Progress
-- `GET /api/progress` - Get user progress overview
-- `GET /api/progress/detailed` - Get detailed progress analytics
+Expected backend response:
 
-#### Career Guidance
-- `GET /api/career/recommendations` - Get career recommendations
-- `POST /api/career/assessment` - Start career assessment
+```json
+{"status":"ok"}
+```
 
-## 📝 Features Breakdown
+## Daily Run Commands
 
-### AI Agents
+After dependencies and `.env` files are already set up, use these two terminals.
 
-1. **Study Agent** (`backend/agents/study_agent.py`)
-   - Generates personalized study plans
-   - Adapts difficulty based on performance
-   - Recommends topics based on weak areas
+Backend terminal:
 
-2. **Tutor Agent** (`backend/agents/tutor_agent.py`)
-   - Provides real-time tutoring assistance
-   - Explains complex concepts
-   - Answers student questions
+```powershell
+cd "C:\Users\Dhruv malhan\Desktop\New folder (4)\New folder\eduagent\backend"
+.\venv\Scripts\Activate.ps1
+python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
+```
 
-3. **Career Agent** (`backend/agents/career_agent.py`)
-   - Recommends career paths
-   - Suggests skill development
-   - Provides industry insights
+Frontend terminal:
 
-### Database Models
+```powershell
+cd "C:\Users\Dhruv malhan\Desktop\New folder (4)\New folder\eduagent\frontend"
+npm run dev
+```
 
-- **User**: User profiles, credentials, preferences
-- **StudyPlan**: Learning goals, timeline, topics
-- **Quiz**: Questions, answers, scoring
-- **Progress**: User performance metrics, completion status
-- **ChatHistory**: Conversation logs with AI agents
+## PowerShell Activation Fix
 
-## 🔒 Security
+If PowerShell blocks virtual environment activation, run this in the same terminal and try activating again:
 
-- JWT-based authentication
-- Password hashing with bcrypt
-- CORS configuration for cross-origin requests
-- Environment variable management for sensitive data
-- Input validation and sanitization
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\venv\Scripts\Activate.ps1
+```
 
-## 🧪 Testing
+If you use Command Prompt instead of PowerShell, activate the backend venv with:
 
-```bash
-# Backend tests
+```bat
+venv\Scripts\activate.bat
+```
+
+## Common Issues
+
+Port `8000` is already in use:
+
+```powershell
+python -m uvicorn main:app --reload --host 127.0.0.1 --port 8001
+```
+
+If you change the backend port, also update `frontend\.env.local`:
+
+```text
+NEXT_PUBLIC_API_URL=http://localhost:8001
+```
+
+Port `3000` is already in use:
+
+```powershell
+npm run dev -- -p 3001
+```
+
+If package installs look broken, reinstall from the project folders:
+
+```powershell
 cd backend
-pytest
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
 
-# Frontend tests
+```powershell
 cd frontend
-npm run test
+npm install
 ```
 
-## 📦 Deployment
+## Useful Commands
 
-### Docker Deployment
+Backend import check:
 
-```bash
-docker-compose up -d
+```powershell
+cd backend
+.\venv\Scripts\python.exe -c "import main; print('backend import ok')"
 ```
 
-### Cloud Deployment
+Frontend production build:
 
-- Backend: Deploy to AWS EC2, Heroku, or DigitalOcean
-- Frontend: Deploy to Vercel, Netlify, or AWS CloudFront
-- Database: Consider managed databases (AWS RDS, MongoDB Atlas)
+```powershell
+cd frontend
+npm run build
+```
 
-## 🤝 Contributing
-
-Contributions are welcome! Please follow these steps:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
-### Coding Standards
-- Follow PEP 8 for Python code
-- Use TypeScript for frontend code
-- Write meaningful commit messages
-- Add tests for new features
-- Update documentation as needed
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 👥 Authors
-
-- **Dhruv Malhan** - Initial Development
-
-## 🙏 Acknowledgments
-
-- FastAPI for the excellent web framework
-- Next.js and React for the frontend framework
-- LangChain for AI agent capabilities
-- The open-source community for amazing tools and libraries
-
-## 📞 Support
-
-For support, email support@eduagent.com or open an issue on GitHub.
-
-## 🗺️ Roadmap
-
-- [ ] Mobile app (iOS/Android)
-- [ ] Advanced analytics dashboard
-- [ ] Integration with popular LMS platforms
-- [ ] Offline mode support
-- [ ] Multi-language support
-- [ ] Advanced AI models integration
-- [ ] Gamification features
-- [ ] Social learning features
-
----
-
-**Last Updated**: June 2026
+Note: `npm run lint` may ask to configure ESLint if no ESLint config exists yet.

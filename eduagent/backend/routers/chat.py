@@ -13,8 +13,17 @@ from utils.pdf_parser import extract_pdf_text
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
-ACADEMIC_KEYWORDS = {"algorithm", "code", "program", "python", "java", "tree", "graph", "array", "stack", "queue", "sql", "dbms", "math", "solve", "formula", "diameter", "recursion"}
-COACH_KEYWORDS = {"stress", "anxiety", "sad", "motivate", "burnout", "tired", "sleep", "procrastinate", "distraction", "focus", "pressure", "confidence", "panic", "overwhelmed", "routine"}
+ACADEMIC_KEYWORDS = {
+    "algorithm", "code", "program", "python", "java", "tree", "graph", "array", "stack", "queue", "sql", "dbms",
+    "math", "solve", "formula", "diameter", "recursion", "physics", "chemistry", "biology", "derivative",
+    "integral", "equation", "compiler", "complexity", "syllabus", "question", "answer", "proof",
+}
+COACH_KEYWORDS = {
+    "stress", "anxiety", "anxious", "sad", "motivate", "motivation", "burnout", "tired", "sleep",
+    "procrastinate", "distraction", "focus", "pressure", "confidence", "panic", "overwhelmed", "routine",
+    "depression", "depressed", "emotional", "emotion", "lonely", "cry", "crying", "hopeless", "fear",
+    "scared", "mental", "mood", "self harm", "suicide", "suicidal",
+}
 
 
 def _is_academic(text: str) -> bool:
@@ -63,7 +72,7 @@ async def academic_chat(student_id: str = Form(...), message: str = Form(""), hi
         data = await file.read()
         file_text = extract_pdf_text(data).text if "pdf" in (file.content_type or "") else data.decode("utf-8", errors="ignore")
     if _is_coach(message) and not _is_academic(message) and not file_text.strip():
-        return ChatResponse(answer="This sounds emotional or motivational. Please switch to Motivation coach for that kind of support.")
+        return ChatResponse(answer="This sounds emotional or motivational. Please switch to Motivation coach so EduAgent can support you in the right mode.")
     system = "You are EduAgent's academic solver. Answer the exact academic/coding question. For code, provide working code, explanation, complexity, and edge cases."
     prompt = f"Recent conversation:\n{_format_history(_history(history))}\n\nCurrent question:\n{message}\n\nUploaded context:\n{file_text[:8000]}"
     return ChatResponse(answer=_complete(system, prompt, academic=True))

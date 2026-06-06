@@ -67,6 +67,14 @@ select {
   @apply text-sm font-semibold uppercase tracking-[0.18em] text-fern dark:text-emerald-200;
 }
 
+.dashboard-action-primary {
+  @apply focus-ring inline-flex h-9 items-center justify-center gap-2 rounded-md bg-fern px-3.5 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-700;
+}
+
+.dashboard-action-secondary {
+  @apply focus-ring inline-flex h-9 items-center justify-center gap-2 rounded-md border border-white/15 bg-white/10 px-3.5 text-sm font-bold text-white/80 shadow-sm transition hover:border-white/25 hover:bg-white/15 hover:text-white;
+}
+
 .hero-grid {
   background-image:
     linear-gradient(rgba(255,255,255,.07) 1px, transparent 1px),

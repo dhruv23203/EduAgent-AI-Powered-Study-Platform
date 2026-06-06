@@ -5,6 +5,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from agents.fallbacks import looks_like_pdf_noise
 from agents.study_agent import generate_study_plan
 from db.database import get_db
 from db.models import QuizAttempt, QuizQuestion, Student, StudyPlan, StudyTaskCompletion
@@ -14,7 +15,8 @@ router = APIRouter(prefix="/api/study", tags=["study"])
 
 
 def _response_from_payload(payload: dict, plan_id: int | None = None) -> StudyPlanResponse:
-    plan = payload.get("plan") or payload.get("study_plan") or []
+    raw_plan = payload.get("plan") or payload.get("study_plan") or []
+    plan = _clean_plan_rows(raw_plan)
     topics = payload.get("topics") or []
     hours: dict[str, float] = payload.get("hours_per_topic") or {}
     if not hours:
@@ -22,6 +24,35 @@ def _response_from_payload(payload: dict, plan_id: int | None = None) -> StudyPl
             for session in day.get("sessions", []):
                 hours[session.get("topic", "Topic")] = hours.get(session.get("topic", "Topic"), 0) + float(session.get("hours", 0))
     return StudyPlanResponse(id=plan_id, study_plan=plan, topics=topics, total_days=len(plan), hours_per_topic=hours)
+
+
+def _clean_plan_rows(rows: list[dict]) -> list[dict]:
+    clean_sessions = []
+    for day in rows:
+        for session in day.get("sessions", []):
+            topic = str(session.get("topic", ""))
+            subtopic = str(session.get("subtopic", ""))
+            if not looks_like_pdf_noise(topic) and not looks_like_pdf_noise(subtopic or topic):
+                clean_sessions.append(session)
+    if not clean_sessions:
+        return []
+
+    cleaned = []
+    for index, day in enumerate(rows):
+        sessions = []
+        for session in day.get("sessions", []):
+            topic = str(session.get("topic", ""))
+            subtopic = str(session.get("subtopic", ""))
+            if looks_like_pdf_noise(topic) or looks_like_pdf_noise(subtopic or topic):
+                continue
+            sessions.append(session)
+        if not sessions:
+            sessions = [dict(clean_sessions[index % len(clean_sessions)])]
+        if sessions:
+            next_day = dict(day)
+            next_day["sessions"] = sessions
+            cleaned.append(next_day)
+    return cleaned
 
 
 def _summary(plan: StudyPlan) -> StudyPlanSummary:

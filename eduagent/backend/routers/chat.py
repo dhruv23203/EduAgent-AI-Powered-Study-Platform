@@ -1,0 +1,81 @@
+import json
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from pydantic import ValidationError
+from sqlalchemy.orm import Session
+
+from agents.fallbacks import allow_local_fallback, should_use_local_ai
+from agents.llm import AgentError, LLMJSONClient
+from db.database import get_db
+from db.models import Student
+from models.schemas import ChatRequest, ChatResponse, ChatTurn
+from utils.pdf_parser import extract_pdf_text
+
+router = APIRouter(prefix="/api/chat", tags=["chat"])
+
+ACADEMIC_KEYWORDS = {"algorithm", "code", "program", "python", "java", "tree", "graph", "array", "stack", "queue", "sql", "dbms", "math", "solve", "formula", "diameter", "recursion"}
+COACH_KEYWORDS = {"stress", "anxiety", "sad", "motivate", "burnout", "tired", "sleep", "procrastinate", "distraction", "focus", "pressure", "confidence", "panic", "overwhelmed", "routine"}
+
+
+def _is_academic(text: str) -> bool:
+    text = text.lower()
+    return any(word in text for word in ACADEMIC_KEYWORDS)
+
+
+def _is_coach(text: str) -> bool:
+    text = text.lower()
+    return any(word in text for word in COACH_KEYWORDS)
+
+
+def _history(raw: str) -> list[ChatTurn]:
+    if not raw:
+        return []
+    try:
+        payload = json.loads(raw)
+        return [ChatTurn.model_validate(item) for item in payload[-8:]]
+    except (json.JSONDecodeError, TypeError, ValidationError):
+        return []
+
+
+def _format_history(history: list[ChatTurn]) -> str:
+    return "\n\n".join(f"{'Learner' if item.role == 'user' else 'EduAgent'}: {item.content[:1400]}" for item in history[-8:]) or "No earlier turns."
+
+
+def _complete(system: str, user: str, academic: bool) -> str:
+    client = LLMJSONClient(max_tokens=2200)
+    if not should_use_local_ai() and client.available:
+        try:
+            return client.complete(system, user, temperature=0.25 if academic else 0.45)
+        except AgentError:
+            if not allow_local_fallback():
+                raise
+    if academic:
+        return "Let's solve it step by step. Identify the core concept, write the rule, apply it to the example, then verify edge cases. If you asked for code, specify the language and I will write it cleanly."
+    return "That sounds heavy. Shrink the next step to one 25-minute block, remove one distraction, and finish with a tiny quiz or checklist so your brain gets a clear win."
+
+
+@router.post("/academic", response_model=ChatResponse)
+async def academic_chat(student_id: str = Form(...), message: str = Form(""), history: str = Form("[]"), file: UploadFile | None = File(None), db: Session = Depends(get_db)) -> ChatResponse:
+    if db.get(Student, student_id) is None:
+        raise HTTPException(status_code=404, detail="Student not found.")
+    file_text = ""
+    if file:
+        data = await file.read()
+        file_text = extract_pdf_text(data).text if "pdf" in (file.content_type or "") else data.decode("utf-8", errors="ignore")
+    if _is_coach(message) and not _is_academic(message) and not file_text.strip():
+        return ChatResponse(answer="This sounds emotional or motivational. Please switch to Motivation coach for that kind of support.")
+    system = "You are EduAgent's academic solver. Answer the exact academic/coding question. For code, provide working code, explanation, complexity, and edge cases."
+    prompt = f"Recent conversation:\n{_format_history(_history(history))}\n\nCurrent question:\n{message}\n\nUploaded context:\n{file_text[:8000]}"
+    return ChatResponse(answer=_complete(system, prompt, academic=True))
+
+
+@router.post("/coach", response_model=ChatResponse)
+def coach_chat(payload: ChatRequest, db: Session = Depends(get_db)) -> ChatResponse:
+    student = db.get(Student, payload.student_id)
+    if student is None:
+        raise HTTPException(status_code=404, detail="Student not found.")
+    if _is_academic(payload.message):
+        return ChatResponse(answer="This is an academic or coding question. Please switch to Academic solver so EduAgent can solve it properly.")
+    system = "You are EduAgent's motivation coach. Respond with empathy, a practical plan adjustment, and one tiny next action."
+    prompt = f"Exam date: {student.exam_date}. Daily hours: {student.daily_hours}.\n\nRecent conversation:\n{_format_history(payload.history)}\n\nCurrent issue:\n{payload.message}"
+    return ChatResponse(answer=_complete(system, prompt, academic=False), plan_updates=["Shrink the next study block to 25 minutes.", "Move revision before new learning if confidence is low.", "End with one small quiz to rebuild momentum."])

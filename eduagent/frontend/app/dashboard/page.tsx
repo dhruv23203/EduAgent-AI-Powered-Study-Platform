@@ -35,8 +35,12 @@ import {
   DailyTaskStatus,
   getDailyTask,
   getProgress,
+  getRevision,
+  getRevisionQuizHistory,
   getStudyPlan,
   ProgressResponse,
+  RevisionQuizHistoryItem,
+  RevisionResponse,
   StudyDay,
   StudyResource,
   StudySession
@@ -71,12 +75,15 @@ export default function DashboardPage() {
   const router = useRouter();
   const [plan, setPlan] = useState<StudyDay[]>([]);
   const [progress, setProgress] = useState<ProgressResponse | null>(null);
+  const [revision, setRevision] = useState<RevisionResponse | null>(null);
+  const [revisionHistory, setRevisionHistory] = useState<RevisionQuizHistoryItem[]>([]);
   const [dailyTask, setDailyTask] = useState<DailyTaskStatus | null>(null);
   const [studentId, setStudentId] = useState("");
   const [examDate, setExamDate] = useState("");
   const [activePlanId, setActivePlanId] = useState<number | null>(null);
   const [loadingPlan, setLoadingPlan] = useState(true);
   const [loadingProgress, setLoadingProgress] = useState(true);
+  const [loadingRevision, setLoadingRevision] = useState(true);
   const [quote, setQuote] = useState(quotes[0]);
 
   useEffect(() => {
@@ -112,6 +119,13 @@ export default function DashboardPage() {
     getDailyTask(user.id, todayIso(), planId)
       .then(setDailyTask)
       .catch(() => setDailyTask(null));
+    getRevision(user.id, planId)
+      .then(setRevision)
+      .catch(() => setRevision(null))
+      .finally(() => setLoadingRevision(false));
+    getRevisionQuizHistory(user.id, planId)
+      .then(setRevisionHistory)
+      .catch(() => setRevisionHistory([]));
   }, [router]);
 
   async function markTask(type: "concepts" | "practice") {
@@ -283,7 +297,7 @@ export default function DashboardPage() {
               </a>
             </div>
           ) : null}
-          <RevisionStatsCard progress={progress} completionPercent={completionPercent} loading={loadingProgress && !progress} />
+          <RevisionStatsCard revision={revision} history={revisionHistory} completionPercent={completionPercent} loading={loadingRevision && !revision} />
         </section>
       </section>
 
@@ -385,8 +399,8 @@ function Stat({ icon: Icon, label, value, loading = false }: { icon: LucideIcon;
   );
 }
 
-function RevisionStatsCard({ progress, completionPercent, loading }: { progress: ProgressResponse | null; completionPercent: number; loading: boolean }) {
-  const stats = revisionStats(progress);
+function RevisionStatsCard({ revision, history, completionPercent, loading }: { revision: RevisionResponse | null; history: RevisionQuizHistoryItem[]; completionPercent: number; loading: boolean }) {
+  const latest = history[0];
   return (
     <div className="mt-5 rounded-lg border border-ink/10 bg-[#f8faf9] p-4 dark:border-white/10 dark:bg-white/5">
       <div className="flex items-start gap-3">
@@ -403,33 +417,16 @@ function RevisionStatsCard({ progress, completionPercent, loading }: { progress:
       ) : (
         <div className="mt-4 grid gap-3">
           <Stat icon={Repeat2} label="Today lane" value={`${completionPercent}%`} />
-          <Stat icon={Brain} label="Revision needed" value={`${stats.revisionNeeded}%`} />
-          <Stat icon={BarChart3} label="Revision quiz accuracy" value={`${stats.quizAccuracy}%`} />
-          <Stat icon={ClipboardList} label="Revision questions" value={stats.revisionQuestions} />
+          <Stat icon={Brain} label="Revision status" value={revision?.is_first_day ? "First day" : latest ? "Quiz saved" : "Not started"} />
+          <Stat icon={BarChart3} label="Latest revision quiz" value={latest ? `${latest.score}%` : "Not taken"} />
+          <Stat icon={ClipboardList} label="Revision history" value={history.length} />
           <div className="rounded-md border border-ink/10 bg-white p-3 text-xs font-semibold leading-5 text-ink/60 dark:border-white/10 dark:bg-[#101923] dark:text-white/60">
-            {stats.mistakes
-              ? `${stats.mistakes} mistake${stats.mistakes === 1 ? "" : "s"} are feeding today's revision focus.`
-              : "Take a quiz and mistakes will turn into revision targets here."}
+            {latest?.mistakes.length
+              ? `${latest.mistakes.length} revision mistake${latest.mistakes.length === 1 ? "" : "s"} saved with specific feedback.`
+              : revision?.message || "Revision stats count only revision quiz submissions from the Revision section."}
           </div>
         </div>
       )}
     </div>
   );
-}
-
-function revisionStats(progress: ProgressResponse | null) {
-  if (!progress) return { revisionNeeded: 0, quizAccuracy: 0, revisionQuestions: 0, mistakes: 0 };
-  const weak = new Set(progress.weak_areas);
-  const weakHistory = progress.history.filter((item) => weak.has(String(item.topic)));
-  const total = weakHistory.reduce((sum, item) => sum + Number(item.total || 0), 0);
-  const correct = weakHistory.reduce((sum, item) => sum + Number(item.correct || 0), 0);
-  const quizAccuracy = total ? Math.round((correct / total) * 100) : Math.round(progress.overall_accuracy || 0);
-  const mistakes = progress.mistakes.reduce((sum, item) => sum + item.mistakes, 0);
-  const revisionNeeded = progress.total_questions_attempted ? Math.min(100, Math.max(0, 100 - quizAccuracy)) : 0;
-  return {
-    revisionNeeded,
-    quizAccuracy,
-    revisionQuestions: progress.total_questions_attempted ? Math.max(10, mistakes || progress.weak_areas.length * 2 || 10) : 0,
-    mistakes,
-  };
 }

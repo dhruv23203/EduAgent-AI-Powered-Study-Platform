@@ -82,6 +82,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="rounded-lg border border-white/15 bg-white/10 p-4">
             <p className="font-black">AI budget</p>
             <p className="mt-2 text-sm text-white/70">{usage ? `${usage.provider || "AI"} ${usage.requests_used}/${usage.daily_limit} requests used today.` : "Budget loading..."}</p>
+            {usage?.api_keys_configured ? (
+              <p className="mt-2 text-xs font-semibold leading-5 text-white/55">
+                Key {usage.active_key_slot || 1} active of {usage.api_keys_configured}. {usage.limited_key_slots?.length ? `Cooling: ${usage.limited_key_slots.join(", ")}.` : "Failover ready."}
+              </p>
+            ) : null}
             <button onClick={signOut} className="focus-ring mt-4 inline-flex items-center gap-2 rounded-md text-sm font-bold text-white/70 hover:text-white"><LogOut className="h-4 w-4" /> Sign out</button>
           </div>
         </div>

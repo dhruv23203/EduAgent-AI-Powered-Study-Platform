@@ -223,6 +223,54 @@ class RevisionResponse(BaseModel):
     total_revision_questions: int = 0
 
 
+class RevisionQuizGenerateRequest(BaseModel):
+    student_id: str
+    plan_id: int | None = None
+    count: int = Field(default=10, ge=1, le=10)
+
+
+class RevisionQuizSubmitRequest(BaseModel):
+    student_id: str
+    plan_id: int | None = None
+    answers: list[SubmittedAnswer]
+
+    @field_validator("answers")
+    @classmethod
+    def require_answers(cls, value: list[SubmittedAnswer]) -> list[SubmittedAnswer]:
+        if not value:
+            raise ValueError("At least one answer is required.")
+        return value
+
+
+class RevisionMistakeFeedback(BaseModel):
+    question: str
+    topic: str
+    subtopic: str = ""
+    selected_answer: str
+    correct_answer: str
+    feedback: str
+    source_mistake: str
+
+
+class RevisionQuizSubmitResponse(BaseModel):
+    quiz_run_id: str
+    score: float
+    correct: int
+    wrong: int
+    total: int
+    mistakes: list[RevisionMistakeFeedback] = Field(default_factory=list)
+
+
+class RevisionQuizHistoryItem(BaseModel):
+    quiz_run_id: str
+    attempted_at: datetime
+    score: float
+    correct: int
+    wrong: int
+    total: int
+    mistakes: list[RevisionMistakeFeedback] = Field(default_factory=list)
+
+
 class DailyTaskStatus(BaseModel):
     date: str
     topic: str

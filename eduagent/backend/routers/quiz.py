@@ -25,7 +25,7 @@ def generate(payload: GenerateQuizRequest, db: Session = Depends(get_db)) -> lis
     try:
         return generate_quiz(db, payload)
     except AgentError as exc:
-        raise HTTPException(status_code=503, detail=f"Quiz generation is temporarily unavailable: {str(exc)[:180]}")
+        raise HTTPException(status_code=503, detail=f"Quiz generation is temporarily unavailable: {str(exc)[:420]}")
 
 
 @router.post("/submit", response_model=QuizSubmitResponse)

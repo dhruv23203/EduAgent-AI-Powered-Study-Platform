@@ -1,3 +1,4 @@
+import base64
 import json
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -50,10 +51,21 @@ def _format_history(history: list[ChatTurn]) -> str:
     return "\n\n".join(f"{'Learner' if item.role == 'user' else 'EduAgent'}: {item.content[:1400]}" for item in history[-8:]) or "No earlier turns."
 
 
-async def _read_upload(file: UploadFile) -> str:
+async def _read_upload(file: UploadFile) -> tuple[str, dict[str, str] | None]:
     data = await file.read()
     name = file.filename or "attachment"
     content_type = file.content_type or "unknown"
+    if content_type.startswith("image/"):
+        encoded = base64.b64encode(data).decode("ascii")
+        if len(encoded) > 4 * 1024 * 1024:
+            return (
+                f"File: {name} ({content_type}, {len(data)} bytes)\nThis image is too large for Groq vision. Ask the learner to upload a smaller screenshot or crop the important area.",
+                None,
+            )
+        return (
+            f"File: {name} ({content_type}, {len(data)} bytes)\nScreenshot/image attached for visual analysis.",
+            {"filename": name, "mime_type": content_type, "base64": encoded},
+        )
     if "pdf" in content_type or data.lstrip().startswith(b"%PDF"):
         parsed = extract_pdf_text(data)
         text = parsed.text
@@ -63,14 +75,18 @@ async def _read_upload(file: UploadFile) -> str:
         label = f"{name} ({content_type}, {len(data)} bytes)"
     if not text.strip():
         text = "No readable text could be extracted from this file. Use the filename/type as context and ask the learner for details if needed."
-    return f"File: {label}\n{text[:6000]}"
+    return f"File: {label}\n{text[:6000]}", None
 
 
-async def _uploaded_context(files: list[UploadFile]) -> str:
+async def _uploaded_context(files: list[UploadFile]) -> tuple[str, list[dict[str, str]]]:
     chunks = []
+    images = []
     for file in files[:6]:
-        chunks.append(await _read_upload(file))
-    return "\n\n---\n\n".join(chunks)
+        text, image = await _read_upload(file)
+        chunks.append(text)
+        if image:
+            images.append(image)
+    return "\n\n---\n\n".join(chunks), images
 
 
 def _complete(system: str, user: str, academic: bool) -> str:
@@ -100,11 +116,18 @@ async def academic_chat(
     uploads = [item for item in (files or []) if item.filename]
     if file and file.filename:
         uploads.append(file)
-    file_text = await _uploaded_context(uploads) if uploads else ""
+    file_text, images = await _uploaded_context(uploads) if uploads else ("", [])
     if _is_coach(message) and not _is_academic(message) and not file_text.strip():
         return ChatResponse(answer="This sounds emotional or motivational. Please switch to Motivation coach so EduAgent can support you in the right mode.")
-    system = "You are EduAgent's academic solver. Answer the exact academic/coding question. For code, provide working code, explanation, complexity, and edge cases."
-    prompt = f"Recent conversation:\n{_format_history(_history(history))}\n\nCurrent question:\n{message or 'Analyze the uploaded file(s).'}\n\nUploaded context:\n{file_text[:12000]}"
+    system = "You are EduAgent's academic solver. Answer the exact academic/coding question. For code, provide working code, explanation, complexity, and edge cases. If screenshots are attached, read the screenshot and solve what is visible."
+    prompt = f"System instruction:\n{system}\n\nRecent conversation:\n{_format_history(_history(history))}\n\nCurrent question:\n{message or 'Analyze the uploaded file(s).'}\n\nUploaded context:\n{file_text[:12000]}"
+    if images:
+        client = LLMJSONClient(max_tokens=2400)
+        try:
+            return ChatResponse(answer=client.complete_with_images(prompt, images, temperature=0.2))
+        except AgentError:
+            if not allow_local_fallback():
+                raise
     return ChatResponse(answer=_complete(system, prompt, academic=True))
 
 

@@ -116,15 +116,24 @@ class LLMJSONClient:
 
     def usage_status(self) -> dict[str, Any]:
         usage = self._usage()
+        state = self._key_state()
+        cooldowns = state.get("cooldowns") or {}
+        limited_slots = []
+        for index, key in enumerate(self.api_keys):
+            cooldown_until = cooldowns.get(self._key_id(key))
+            if cooldown_until and not self._key_available_now(key, state):
+                limited_slots.append(index + 1)
         return {
             "date": usage["date"],
             "provider": self.provider.upper(),
             "model": self.model,
+            "vision_model": os.getenv("GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct"),
             "daily_limit": self.daily_limit,
             "requests_used": int(usage.get("requests_used", 0)),
             "requests_remaining": max(0, self.daily_limit - int(usage.get("requests_used", 0))),
             "api_keys_configured": len(self.api_keys),
-            "active_key_slot": int(self._key_state().get("active_key") or 0) + 1 if self.api_keys else 0,
+            "active_key_slot": int(state.get("active_key") or 0) + 1 if self.api_keys else 0,
+            "limited_key_slots": limited_slots,
         }
 
     def complete(self, system_prompt: str, user_prompt: str, temperature: float = 0.25) -> str:
@@ -138,6 +147,40 @@ class LLMJSONClient:
             except Exception:
                 pass
 
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": temperature,
+            "max_tokens": self.max_tokens,
+        }
+        content = self._complete_payload(payload)
+        if self.cache_enabled:
+            cache_path.write_text(json.dumps({"content": content}))
+        return content
+
+    def complete_with_images(self, prompt: str, images: list[dict[str, str]], temperature: float = 0.2) -> str:
+        if not self.available:
+            raise AgentError("Groq API key is not configured.")
+        if not images:
+            return self.complete("You are EduAgent's academic solver.", prompt, temperature)
+        content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        for image in images[:5]:
+            mime_type = image.get("mime_type") or "image/png"
+            data = image.get("base64") or ""
+            if data:
+                content.append({"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{data}"}})
+        payload = {
+            "model": os.getenv("GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct"),
+            "messages": [{"role": "user", "content": content}],
+            "temperature": temperature,
+            "max_tokens": self.max_tokens,
+        }
+        return self._complete_payload(payload)
+
+    def _complete_payload(self, payload: dict[str, Any]) -> str:
         usage = self._usage()
         if int(usage.get("requests_used", 0)) >= self.daily_limit:
             raise AgentError("Daily Groq request budget exhausted.")
@@ -145,22 +188,19 @@ class LLMJSONClient:
         state = self._key_state()
         last_error = ""
         response = None
+        attempted_slots: list[int] = []
+        limited_slots: list[int] = []
+        skipped_slots: list[int] = []
         for index in self._ordered_key_indexes(state):
             key = self.api_keys[index]
             if not self._key_available_now(key, state):
+                skipped_slots.append(index + 1)
                 continue
+            attempted_slots.append(index + 1)
             response = requests.post(
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                json={
-                    "model": self.model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    "temperature": temperature,
-                    "max_tokens": self.max_tokens,
-                },
+                json=payload,
                 timeout=45,
             )
             usage["requests_used"] = int(usage.get("requests_used", 0)) + 1
@@ -170,14 +210,19 @@ class LLMJSONClient:
                 break
             last_error = response.text[:500]
             if self._is_rate_limited(response):
+                limited_slots.append(index + 1)
                 self._mark_key_limited(key, state)
                 continue
             raise AgentError(last_error)
         if response is None or response.status_code >= 400:
-            raise AgentError(last_error or "All configured Groq API keys are temporarily unavailable or rate-limited.")
+            tried = sorted(set(attempted_slots + skipped_slots + limited_slots))
+            detail = f"Tried {len(tried) or len(self.api_keys)} configured Groq API key(s)."
+            if limited_slots or skipped_slots:
+                detail += f" Limited/cooling key slots: {sorted(set(limited_slots + skipped_slots))}."
+            detail += " EduAgent automatically moves to the next configured key when one is rate-limited."
+            last = f" Last Groq response: {last_error}" if last_error else ""
+            raise AgentError(f"All configured Groq API keys are temporarily unavailable or rate-limited. {detail}{last}")
         content = response.json()["choices"][0]["message"]["content"].strip()
-        if self.cache_enabled:
-            cache_path.write_text(json.dumps({"content": content}))
         return content
 
     def _is_rate_limited(self, response: requests.Response) -> bool:

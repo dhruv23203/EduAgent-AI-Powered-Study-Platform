@@ -3,7 +3,7 @@ from collections import defaultdict
 from datetime import timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from agents.fallbacks import resources_for_topic
@@ -18,13 +18,18 @@ router = APIRouter(prefix="/api/revision", tags=["revision"])
 
 
 @router.get("/{student_id}", response_model=RevisionResponse)
-def get_revision(student_id: str, db: Session = Depends(get_db)) -> RevisionResponse:
+def get_revision(student_id: str, plan_id: int | None = Query(default=None), db: Session = Depends(get_db)) -> RevisionResponse:
     if db.get(Student, student_id) is None:
         raise HTTPException(status_code=404, detail="Student not found.")
+    if plan_id is not None and db.query(StudyPlan.id).filter(StudyPlan.student_id == student_id, StudyPlan.id == plan_id).first() is None:
+        raise HTTPException(status_code=404, detail="Plan not found.")
 
     today = local_today()
     yesterday = today - timedelta(days=1)
-    attempts = db.query(QuizAttempt).filter(QuizAttempt.student_id == student_id).order_by(QuizAttempt.attempted_at.desc()).all()
+    attempts_query = db.query(QuizAttempt).filter(QuizAttempt.student_id == student_id)
+    if plan_id is not None:
+        attempts_query = attempts_query.filter(QuizAttempt.plan_id == plan_id)
+    attempts = attempts_query.order_by(QuizAttempt.attempted_at.desc()).all()
     past_attempts = [attempt for attempt in attempts if local_date(attempt.attempted_at) < today]
     yesterday_attempts = [attempt for attempt in past_attempts if local_date(attempt.attempted_at) == yesterday]
     source_attempts = yesterday_attempts or past_attempts
@@ -34,15 +39,31 @@ def get_revision(student_id: str, db: Session = Depends(get_db)) -> RevisionResp
     groq_feedback = groq_progress_feedback(past_attempts, weakness, mistakes)
     feedback = groq_feedback[1] if groq_feedback else feedback_items(weakness.accuracy_by_topic, mistakes)
 
-    previous_plan_sessions = _previous_plan_sessions(db, student_id, yesterday)
+    previous_plan_sessions = _previous_plan_sessions(db, student_id, yesterday, plan_id)
+    if not past_attempts and not previous_plan_sessions:
+        return RevisionResponse(
+            priority_topics=[],
+            exam_focus=["First study day"],
+            revision_plan=[],
+            feedback=[],
+            is_first_day=True,
+            message="You have nothing to revise because this is your first day. Enjoy today's learning block and come back tomorrow for a mistake-based revision plan.",
+            quiz_questions=[],
+            revision_percentage=0,
+            quiz_accuracy=0,
+            total_revision_questions=0,
+        )
     revision = _groq_revision(today, yesterday, source_attempts, previous_plan_sessions, feedback)
     if revision is None:
         revision = _local_revision(today, source_attempts, previous_plan_sessions, feedback)
     return revision
 
 
-def _previous_plan_sessions(db: Session, student_id: str, target_date) -> list[dict[str, Any]]:
-    latest = db.query(StudyPlan).filter(StudyPlan.student_id == student_id).order_by(StudyPlan.created_at.desc()).first()
+def _previous_plan_sessions(db: Session, student_id: str, target_date, plan_id: int | None = None) -> list[dict[str, Any]]:
+    query = db.query(StudyPlan).filter(StudyPlan.student_id == student_id)
+    if plan_id is not None:
+        query = query.filter(StudyPlan.id == plan_id)
+    latest = query.order_by(StudyPlan.created_at.desc()).first()
     if latest is None:
         return []
     payload = json.loads(latest.plan_json)
@@ -99,26 +120,28 @@ def _groq_revision(today, yesterday, attempts: list[QuizAttempt], plan_sessions:
     if not client.available:
         return None
     system = """You are EduAgent's Groq revision strategist. Return JSON only.
-Return { "priority_topics": string[], "exam_focus": string[], "sessions": [ { "topic": string, "subtopic": string, "minutes": number, "activity": string, "focus_points": string[] } ] }.
+Return { "priority_topics": string[], "exam_focus": string[], "self_check_questions": string[], "sessions": [ { "topic": string, "subtopic": string, "minutes": number, "activity": string, "focus_points": string[] } ] }.
 Create only today's 30-minute revision plan. Use yesterday's topics/quizzes first, then older past mistakes if yesterday has no data.
-Do not include future study-plan topics."""
+Do not include future study-plan topics.
+The self_check_questions array must contain exactly 10 specific questions based on past quiz mistakes or completed past concepts."""
     prompt = (
         f"Today: {today.isoformat()}\nYesterday: {yesterday.isoformat()}\n"
         f"Yesterday/past quiz summary: {_attempt_summary(attempts)}\n"
         f"Previous plan sessions: {plan_sessions}\n"
         f"Topic feedback: {[item.model_dump(mode='json') for item in feedback[:6]]}\n"
-        "Build exactly 30 minutes total. Prefer 3 short sessions: recall, redo mistakes, mini-check."
+        "Build exactly 30 minutes total. Prefer 3 short sessions: recall, redo mistakes, mini-check. "
+        "Make every self-check question specific to the topic, subtopic, and mistake pattern."
     )
     try:
         raw = client.complete_json(system, prompt, temperature=0.25)
         if not isinstance(raw, dict):
             return None
-        return _revision_from_raw(today, raw, feedback)
+        return _revision_from_raw(today, raw, attempts, plan_sessions, feedback)
     except Exception:
         return None
 
 
-def _revision_from_raw(today, raw: dict[str, Any], feedback: list[FeedbackItem]) -> RevisionResponse:
+def _revision_from_raw(today, raw: dict[str, Any], attempts: list[QuizAttempt], plan_sessions: list[dict[str, Any]], feedback: list[FeedbackItem]) -> RevisionResponse:
     sessions = []
     used_minutes = 0.0
     for item in raw.get("sessions", [])[:4]:
@@ -141,18 +164,25 @@ def _revision_from_raw(today, raw: dict[str, Any], feedback: list[FeedbackItem])
             }
         )
     if not sessions:
-        return _local_revision(today, [], [], feedback)
+        return _local_revision(today, attempts, plan_sessions, feedback)
     if abs(used_minutes - 30.0) > 0.1:
         scale = 30.0 / used_minutes
         for session in sessions:
             session["hours"] = round(max(5.0 / 60, float(session["hours"]) * scale), 2)
     priority_topics = [str(topic) for topic in raw.get("priority_topics", []) if str(topic).strip()][:5] or [item.topic for item in feedback[:3]]
     exam_focus = [str(item) for item in raw.get("exam_focus", []) if str(item).strip()][:4] or ["Redo yesterday's wrong answers", "Recall key definitions", "Take one mini-check"]
+    quiz_questions = _ten_revision_questions(attempts, plan_sessions, feedback, raw.get("self_check_questions", []))
     return RevisionResponse(
         priority_topics=priority_topics,
         exam_focus=exam_focus,
         revision_plan=[StudyDay.model_validate({"day": 1, "date": today.isoformat(), "sessions": sessions})],
         feedback=feedback,
+        is_first_day=False,
+        message="Today's revision is built only from earlier quiz mistakes and completed concepts.",
+        quiz_questions=quiz_questions,
+        revision_percentage=_revision_percentage(attempts),
+        quiz_accuracy=_quiz_accuracy(attempts),
+        total_revision_questions=len(quiz_questions),
     )
 
 
@@ -173,6 +203,7 @@ def _local_revision(today, attempts: list[QuizAttempt], plan_sessions: list[dict
         if plan_sessions
         else topic
     )
+    quiz_questions = _ten_revision_questions(attempts, plan_sessions, feedback)
     sessions = [
         {
             "topic": topic,
@@ -180,7 +211,7 @@ def _local_revision(today, attempts: list[QuizAttempt], plan_sessions: list[dict
             "hours": 0.1,
             "activity": "5-minute active recall",
             "priority": "High",
-            "focus_points": [f"Write the main rule for {subtopic} from memory.", "List two common traps before looking at notes."],
+            "focus_points": [f"Write the main rule for {subtopic} from memory.", "List two common traps before looking at notes.", *quiz_questions[:2]],
             "resources": resources_for_topic(topic, subtopic),
         },
         {
@@ -189,7 +220,7 @@ def _local_revision(today, attempts: list[QuizAttempt], plan_sessions: list[dict
             "hours": 0.25,
             "activity": "15-minute mistake redo",
             "priority": "High",
-            "focus_points": ["Redo yesterday's wrong or uncertain quiz questions.", "Explain why each wrong option is wrong."],
+            "focus_points": ["Redo yesterday's wrong or uncertain quiz questions.", "Explain why each wrong option is wrong.", *quiz_questions[2:5]],
             "resources": resources_for_topic(topic, f"{subtopic} practice"),
         },
         {
@@ -198,7 +229,7 @@ def _local_revision(today, attempts: list[QuizAttempt], plan_sessions: list[dict
             "hours": 0.15,
             "activity": "10-minute mini-check",
             "priority": "High",
-            "focus_points": ["Answer three quick questions without notes.", "Save one correction note for tomorrow."],
+            "focus_points": ["Answer the 10-question self-check without notes.", "Save one correction note for tomorrow.", *quiz_questions[5:8]],
             "resources": resources_for_topic(topic, f"{subtopic} quiz"),
         },
     ]
@@ -207,4 +238,91 @@ def _local_revision(today, attempts: list[QuizAttempt], plan_sessions: list[dict
         exam_focus=["Review only topics completed before today", "Redo wrong quiz patterns", "Keep revision to 30 minutes"],
         revision_plan=[StudyDay.model_validate({"day": 1, "date": today.isoformat(), "sessions": sessions})],
         feedback=feedback,
+        is_first_day=False,
+        message="Today's revision is built only from earlier quiz mistakes and completed concepts.",
+        quiz_questions=quiz_questions,
+        revision_percentage=_revision_percentage(attempts),
+        quiz_accuracy=_quiz_accuracy(attempts),
+        total_revision_questions=len(quiz_questions),
     )
+
+
+def _quiz_accuracy(attempts: list[QuizAttempt]) -> float:
+    if not attempts:
+        return 0
+    return round((sum(int(item.is_correct) for item in attempts) / len(attempts)) * 100, 2)
+
+
+def _revision_percentage(attempts: list[QuizAttempt]) -> float:
+    if not attempts:
+        return 0
+    wrong = sum(int(not item.is_correct) for item in attempts)
+    return round(min(100, max(0, (wrong / len(attempts)) * 100)), 2)
+
+
+def _question_key(value: str) -> str:
+    import re
+
+    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+
+def _ten_revision_questions(
+    attempts: list[QuizAttempt],
+    plan_sessions: list[dict[str, Any]],
+    feedback: list[FeedbackItem],
+    suggested: list[Any] | None = None,
+) -> list[str]:
+    rows: list[str] = []
+    seen: set[str] = set()
+
+    def add(value: str) -> None:
+        text = " ".join(str(value).split()).strip()
+        marker = _question_key(text)
+        if text and marker and marker not in seen and len(rows) < 10:
+            seen.add(marker)
+            rows.append(text[:240])
+
+    for item in suggested or []:
+        add(str(item))
+    for attempt in attempts:
+        if not attempt.is_correct:
+            add(f"Redo this without notes: {attempt.question_text} Why is option {attempt.correct_answer} stronger than option {attempt.selected_answer}?")
+    for item in feedback:
+        for step in item.next_steps:
+            add(f"For {item.topic}, answer this revision check: {step}")
+    for session in plan_sessions:
+        topic = str(session.get("topic") or "the previous concept")
+        subtopic = str(session.get("subtopic") or topic)
+        for point in session.get("focus_points", [])[:4]:
+            add(f"In {topic} - {subtopic}, explain and apply this point: {point}")
+    topic = (
+        attempts[0].topic
+        if attempts
+        else str(plan_sessions[0].get("topic"))
+        if plan_sessions
+        else feedback[0].topic
+        if feedback
+        else "the previous topic"
+    )
+    subtopic = (
+        attempts[0].subtopic
+        if attempts and attempts[0].subtopic
+        else str(plan_sessions[0].get("subtopic"))
+        if plan_sessions
+        else topic
+    )
+    fillers = [
+        f"Define the core rule of {subtopic} in {topic} and give one example.",
+        f"Solve one medium-level question on {subtopic} and write why each wrong option is wrong.",
+        f"List two edge cases that can break a solution for {subtopic}.",
+        f"Compare the fastest and safest method for solving {subtopic} questions.",
+        f"Create one exam-style MCQ for {subtopic}, then answer it with reasoning.",
+        f"Write the mistake you are most likely to make in {subtopic} and the check that prevents it.",
+        f"Explain {subtopic} to a beginner using one diagram or step trace.",
+        f"Do a 2-minute memory dump of formulas, definitions, or rules for {subtopic}.",
+        f"Turn the last wrong answer pattern into one corrected note for {topic}.",
+        f"Finish with one timed question on {topic} and mark the exact step that caused hesitation.",
+    ]
+    for item in fillers:
+        add(item)
+    return rows[:10]

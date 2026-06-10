@@ -173,7 +173,7 @@ export default function LoginPage() {
           </div>
         </section>
 
-        <form onSubmit={submit} className="max-h-[calc(100vh-3.5rem)] overflow-y-auto rounded-lg border border-white/70 bg-white/95 p-5 text-ink shadow-panel backdrop-blur-xl sm:p-7 dark:border-white/10 dark:bg-[#111b26]/95 dark:text-white">
+        <form onSubmit={submit} className="max-h-[calc(100vh-3.5rem)] overflow-y-auto rounded-lg border border-white/70 bg-white/95 p-5 text-ink shadow-panel ring-1 ring-ink/5 backdrop-blur-xl sm:p-7 dark:border-white/10 dark:bg-[#111b26]/95 dark:text-white dark:ring-white/10">
           <div className="relative grid grid-cols-2 overflow-hidden rounded-lg bg-ink/5 p-1 dark:bg-white/10">
             <span
               aria-hidden="true"
@@ -230,8 +230,8 @@ export default function LoginPage() {
               <label className="block">
                 <span className="text-sm font-black">Name</span>
                 <div className="relative mt-2">
-                  {!name ? <User className="pointer-events-none absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2 text-ink/35 transition dark:text-white/35" /> : null}
-                  <input value={name} onChange={(e) => setName(e.target.value)} className={`auth-input ${name ? "pl-4" : "pl-16"}`} placeholder="Your name" required />
+                  <span className="auth-field-icon"><User className="h-4 w-4" /></span>
+                  <input value={name} onChange={(e) => setName(e.target.value)} className="auth-input auth-input-with-icon" placeholder="Your name" required />
                 </div>
               </label>
             ) : null}
@@ -239,20 +239,20 @@ export default function LoginPage() {
             <label className="block">
               <span className="text-sm font-black">Email</span>
               <div className="relative mt-2">
-                {!email ? <Mail className="pointer-events-none absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2 text-ink/35 transition dark:text-white/35" /> : null}
-                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={`auth-input ${email ? "pl-4" : "pl-16"}`} placeholder="you@example.com" required />
+                <span className="auth-field-icon"><Mail className="h-4 w-4" /></span>
+                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="auth-input auth-input-with-icon" placeholder="you@example.com" required />
               </div>
             </label>
 
             <label className="block">
               <span className="text-sm font-black">Password</span>
               <div className="relative mt-2">
-                {!password ? <LockKeyhole className="pointer-events-none absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2 text-ink/35 transition dark:text-white/35" /> : null}
+                <span className="auth-field-icon"><LockKeyhole className="h-4 w-4" /></span>
                 <input
                   type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className={`auth-input pr-12 ${password ? "pl-4" : "pl-16"}`}
+                  className="auth-input auth-input-with-icon auth-input-password"
                   placeholder="Minimum 6 characters"
                   required
                   minLength={6}

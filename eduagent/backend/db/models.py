@@ -92,3 +92,15 @@ class StreakRecovery(Base):
     recovered_date: Mapped[date] = mapped_column(Date, index=True, nullable=False)
     spent_coins: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class RewardLedger(Base):
+    __tablename__ = "reward_ledger"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(Text, ForeignKey("users.id"), index=True, nullable=False)
+    plan_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("study_plans.id"), index=True, nullable=True)
+    quiz_run_id: Mapped[str | None] = mapped_column(Text, index=True, nullable=True)
+    coins_earned: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    new_badges_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

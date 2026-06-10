@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from agents.fallbacks import looks_like_pdf_noise
 from agents.study_agent import generate_study_plan
 from db.database import get_db
-from db.models import QuizAttempt, QuizQuestion, Student, StudyPlan, StudyTaskCompletion
+from db.models import QuizAttempt, QuizQuestion, RewardLedger, Student, StudyPlan, StudyTaskCompletion
 from models.schemas import GeneratePlanRequest, StudyPlanResponse, StudyPlanSummary
 
 router = APIRouter(prefix="/api/study", tags=["study"])
@@ -129,6 +129,7 @@ def delete_plan(student_id: str, plan_id: int, db: Session = Depends(get_db)) ->
     deleted_attempts = db.query(QuizAttempt).filter(QuizAttempt.student_id == student_id, QuizAttempt.plan_id == plan_id).delete(synchronize_session=False)
     deleted_questions = db.query(QuizQuestion).filter(QuizQuestion.student_id == student_id, QuizQuestion.plan_id == plan_id).delete(synchronize_session=False)
     deleted_tasks = db.query(StudyTaskCompletion).filter(StudyTaskCompletion.student_id == student_id, StudyTaskCompletion.plan_id == plan_id).delete(synchronize_session=False)
+    deleted_rewards = db.query(RewardLedger).filter(RewardLedger.user_id == student_id, RewardLedger.plan_id == plan_id).delete(synchronize_session=False)
     db.delete(plan)
     db.commit()
     return {
@@ -137,4 +138,5 @@ def delete_plan(student_id: str, plan_id: int, db: Session = Depends(get_db)) ->
         "deleted_quiz_attempts": deleted_attempts,
         "deleted_quiz_questions": deleted_questions,
         "deleted_task_completions": deleted_tasks,
+        "deleted_rewards": deleted_rewards,
     }

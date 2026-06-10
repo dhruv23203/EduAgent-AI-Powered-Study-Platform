@@ -13,7 +13,8 @@ SYSTEM_PROMPT = """You generate exam-quality multiple choice quizzes.
 Return only a JSON array. Each item must contain: question, options {A,B,C,D}, correct_answer, explanation, difficulty.
 Questions must test the exact daily topic and subtopic content, not generic study planning.
 Every question must be new, specific, and answerable from the named topic/subtopic.
-Do not repeat wording, examples, or concepts from the previous questions list."""
+Do not repeat wording, examples, option patterns, or concepts from the previous questions list.
+All questions inside the same quiz must also be unique from each other."""
 
 
 def _fingerprint(value: str) -> str:
@@ -59,7 +60,7 @@ def _plan_context(db: Session, payload: GenerateQuizRequest) -> str:
     return json.dumps(matches[:3], ensure_ascii=False)
 
 
-def _local_questions(payload: GenerateQuizRequest) -> list[QuizQuestion]:
+def _local_questions(payload: GenerateQuizRequest, used: set[str] | None = None) -> list[QuizQuestion]:
     focus = payload.subtopic or payload.topic
     stems = [
         f"In {payload.topic}, which statement most accurately explains {focus}?",
@@ -70,13 +71,25 @@ def _local_questions(payload: GenerateQuizRequest) -> list[QuizQuestion]:
         f"Which example would best prove that you understand {focus}?",
         f"What should be compared when two answer choices both mention {focus}?",
         f"Which revision note is most useful after missing a {payload.topic} question about {focus}?",
+        f"When {focus} appears in an exam stem, which clue should guide the first step?",
+        f"Which reason best explains why a direct memorized answer can fail for {focus}?",
+        f"In a timed quiz on {payload.topic}, what is the safest way to validate a {focus} answer?",
+        f"Which misconception about {focus} would most likely produce a wrong option choice?",
+        f"How should a solved example for {focus} be traced before selecting an answer?",
+        f"Which constraint must be preserved while applying {focus} in {payload.topic}?",
+        f"What is the best final check before submitting a {focus} answer?",
     ]
     rows = []
-    for index in range(payload.count):
+    used_markers = set(used or set())
+    for index, stem in enumerate(stems):
+        marker = _fingerprint(stem)
+        if marker in used_markers:
+            continue
+        used_markers.add(marker)
         rows.append(
             QuizQuestion(
                 id=uuid.uuid4().hex,
-                question=stems[index % len(stems)],
+                question=stem,
                 options={
                     "A": "Use the core definition and trace a solved example",
                     "B": "Ignore constraints and memorize only the answer",
@@ -90,6 +103,29 @@ def _local_questions(payload: GenerateQuizRequest) -> list[QuizQuestion]:
                 subtopic=payload.subtopic,
             )
         )
+        if len(rows) >= payload.count:
+            break
+    while len(rows) < payload.count:
+        stem = f"In a fresh applied scenario for {focus}, which reasoning step best proves the answer for {payload.topic}?"
+        stem = f"{stem} Variant {uuid.uuid4().hex[:6]}."
+        used_markers.add(_fingerprint(stem))
+        rows.append(
+            QuizQuestion(
+                id=uuid.uuid4().hex,
+                question=stem,
+                options={
+                    "A": "State the rule, apply it to the scenario, and verify the result",
+                    "B": "Choose the longest option without checking the concept",
+                    "C": "Skip the scenario details and rely on memory only",
+                    "D": "Switch to an unrelated topic before answering",
+                },
+                correct_answer="A",
+                explanation=f"The reliable method is to apply the {focus} rule to the exact scenario and verify the result.",
+                difficulty=payload.difficulty,
+                topic=payload.topic,
+                subtopic=payload.subtopic,
+            )
+        )
     return rows
 
 
@@ -97,7 +133,7 @@ def generate_quiz(db: Session, payload: GenerateQuizRequest) -> list[QuizQuestio
     recent_query = db.query(StoredQuestion.question_text).filter(StoredQuestion.student_id == payload.student_id, StoredQuestion.topic == payload.topic)
     if payload.plan_id is not None:
         recent_query = recent_query.filter(StoredQuestion.plan_id == payload.plan_id)
-    recent_rows = recent_query.order_by(StoredQuestion.created_at.desc()).limit(8).all()
+    recent_rows = recent_query.order_by(StoredQuestion.created_at.desc()).limit(50).all()
     student = db.get(Student, payload.student_id)
     syllabus_excerpt = _relevant_excerpt(student.syllabus_text or "", payload.topic, payload.subtopic) if student else ""
     notes_excerpt = _relevant_excerpt(student.notes_text or "", payload.topic, payload.subtopic) if student else ""
@@ -107,10 +143,12 @@ def generate_quiz(db: Session, payload: GenerateQuizRequest) -> list[QuizQuestio
         f"Daily plan context: {plan_context or 'No matching plan context found.'}\n"
         f"Relevant syllabus excerpt:\n{syllabus_excerpt or 'No readable matching syllabus excerpt.'}\n\n"
         f"Relevant notes excerpt:\n{notes_excerpt or 'No readable matching notes excerpt.'}\n\n"
-        f"Count: {payload.count}\nAvoid these previous questions: {[row[0] for row in recent_rows]}\n"
+        f"Fresh quiz run nonce: {uuid.uuid4().hex}\n"
+        f"Count: {payload.count}\nAvoid these previous questions from this plan/topic: {[row[0] for row in recent_rows]}\n"
         "Generate exactly Count questions. Keep all questions strictly about the daily topic/subtopic. "
         "Use the syllabus/notes excerpts as the source of truth whenever they are present. "
-        "Each option must be plausible and each explanation must name why the correct answer is correct."
+        "Each option must be plausible and each explanation must name why the correct answer is correct. "
+        "Do not reuse a stem, example, answer pattern, or testing concept from the avoid list."
     )
     client = LLMJSONClient(max_tokens=1700)
     questions: list[QuizQuestion] = []
@@ -134,15 +172,15 @@ def generate_quiz(db: Session, payload: GenerateQuizRequest) -> list[QuizQuestio
                     break
         except Exception as exc:
             if _is_rate_limited(exc) or allow_quiz_fallback():
-                questions = _local_questions(payload)
+                questions = _local_questions(payload, {_fingerprint(row[0]) for row in recent_rows})
             else:
                 raise
     elif not allow_quiz_fallback():
         raise AgentError("Groq API key is not configured. Quiz generation requires Groq.")
     if not questions:
-        questions = _local_questions(payload)
+        questions = _local_questions(payload, {_fingerprint(row[0]) for row in recent_rows})
     elif len(questions) < payload.count and allow_quiz_fallback():
-        questions.extend(_local_questions(payload)[: payload.count - len(questions)])
+        questions.extend(_local_questions(payload, {_fingerprint(row[0]) for row in recent_rows} | {_fingerprint(question.question) for question in questions})[: payload.count - len(questions)])
     elif len(questions) < payload.count:
         raise AgentError("Groq did not return enough unique quiz questions. Please generate again.")
     for question in questions:

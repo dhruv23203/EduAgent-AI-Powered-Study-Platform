@@ -3,7 +3,7 @@ from collections import defaultdict
 from datetime import date, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from agents.weakness_agent import WeaknessAgent, feedback_items, groq_progress_feedback, mistake_insights
@@ -17,15 +17,21 @@ router = APIRouter(prefix="/api/progress", tags=["progress"])
 
 
 @router.get("/{student_id}", response_model=ProgressResponse)
-def get_progress(student_id: str, db: Session = Depends(get_db)) -> ProgressResponse:
+def get_progress(student_id: str, plan_id: int | None = Query(default=None), db: Session = Depends(get_db)) -> ProgressResponse:
     student = db.get(Student, student_id)
     if student is None:
         raise HTTPException(status_code=404, detail="Student not found.")
-    attempts = db.query(QuizAttempt).filter(QuizAttempt.student_id == student_id).order_by(QuizAttempt.attempted_at.desc()).all()
+    plan = _latest_plan(db, student_id, plan_id)
+    if plan_id is not None and plan is None:
+        raise HTTPException(status_code=404, detail="Plan not found.")
+    attempts_query = db.query(QuizAttempt).filter(QuizAttempt.student_id == student_id)
+    if plan_id is not None:
+        attempts_query = attempts_query.filter(QuizAttempt.plan_id == plan_id)
+    attempts = attempts_query.order_by(QuizAttempt.attempted_at.desc()).all()
     weakness = WeaknessAgent().analyse_attempts(attempts)
     total = len(attempts)
     correct = sum(int(item.is_correct) for item in attempts)
-    activity = _activity_summary(db, student_id, attempts)
+    activity = _activity_summary(db, student_id, attempts, plan_id)
     streak = _streak(activity["completed_dates"], activity["recovered_dates"])
     mistakes = mistake_insights(attempts)
     groq_feedback = groq_progress_feedback(attempts, weakness, mistakes)
@@ -34,7 +40,7 @@ def get_progress(student_id: str, db: Session = Depends(get_db)) -> ProgressResp
     return ProgressResponse(
         overall_accuracy=round((correct / total) * 100, 2) if total else 0,
         topics_covered=sorted({item.topic for item in attempts}),
-        topics_remaining=[topic for topic in _plan_topics(_latest_plan(db, student_id)) if topic not in {item.topic for item in attempts}],
+        topics_remaining=[topic for topic in _plan_topics(plan) if topic not in {item.topic for item in attempts}],
         weak_areas=weakness.weak_topics,
         strong_areas=weakness.strong_topics,
         streak_days=streak,
@@ -42,15 +48,18 @@ def get_progress(student_id: str, db: Session = Depends(get_db)) -> ProgressResp
         accuracy_by_topic=weakness.accuracy_by_topic,
         insight=insight,
         history=_history(attempts),
-        heatmap=_heatmap(student, _latest_plan(db, student_id), activity),
+        heatmap=_heatmap(student, plan, activity),
         mistakes=mistakes,
         feedback=feedback,
-        rewards=summary_for_user(db, student_id, streak),
+        rewards=summary_for_user(db, student_id, streak, plan_id),
     )
 
 
-def _latest_plan(db: Session, student_id: str) -> StudyPlan | None:
-    return db.query(StudyPlan).filter(StudyPlan.student_id == student_id).order_by(StudyPlan.created_at.desc()).first()
+def _latest_plan(db: Session, student_id: str, plan_id: int | None = None) -> StudyPlan | None:
+    query = db.query(StudyPlan).filter(StudyPlan.student_id == student_id)
+    if plan_id is not None:
+        query = query.filter(StudyPlan.id == plan_id)
+    return query.order_by(StudyPlan.created_at.desc()).first()
 
 
 def _plan_topics(plan: StudyPlan | None) -> list[str]:
@@ -78,7 +87,7 @@ def _history(attempts: list[QuizAttempt]) -> list[dict[str, str | int | float]]:
     ]
 
 
-def _activity_summary(db: Session, student_id: str, attempts: list[QuizAttempt]) -> dict[str, Any]:
+def _activity_summary(db: Session, student_id: str, attempts: list[QuizAttempt], plan_id: int | None = None) -> dict[str, Any]:
     quiz_by_date: dict[date, dict[str, int]] = defaultdict(lambda: {"correct": 0, "total": 0})
     quiz_runs_by_date: dict[date, set[str]] = defaultdict(set)
     for attempt in attempts:
@@ -88,7 +97,10 @@ def _activity_summary(db: Session, student_id: str, attempts: list[QuizAttempt])
         run_id = attempt.quiz_run_id or f"legacy-{attempt.attempted_at.replace(microsecond=0).isoformat()}"
         quiz_runs_by_date[key].add(run_id)
     task_types: dict[date, set[str]] = defaultdict(set)
-    for task_date, task_type in db.query(StudyTaskCompletion.task_date, StudyTaskCompletion.task_type).filter(StudyTaskCompletion.student_id == student_id).all():
+    tasks_query = db.query(StudyTaskCompletion.task_date, StudyTaskCompletion.task_type).filter(StudyTaskCompletion.student_id == student_id)
+    if plan_id is not None:
+        tasks_query = tasks_query.filter(StudyTaskCompletion.plan_id == plan_id)
+    for task_date, task_type in tasks_query.all():
         task_types[task_date].add(task_type)
     recovered = {row[0] for row in db.query(StreakRecovery.recovered_date).filter(StreakRecovery.user_id == student_id).all()}
     candidates = set(quiz_by_date) | set(task_types)

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from agents.fallbacks import allow_local_fallback, should_use_local_ai
+from agents.fallbacks import allow_local_fallback, sanitize_document_text, should_use_local_ai
 from agents.llm import AgentError, LLMJSONClient
 from db.database import get_db
 from db.models import Student
@@ -50,6 +50,29 @@ def _format_history(history: list[ChatTurn]) -> str:
     return "\n\n".join(f"{'Learner' if item.role == 'user' else 'EduAgent'}: {item.content[:1400]}" for item in history[-8:]) or "No earlier turns."
 
 
+async def _read_upload(file: UploadFile) -> str:
+    data = await file.read()
+    name = file.filename or "attachment"
+    content_type = file.content_type or "unknown"
+    if "pdf" in content_type or data.lstrip().startswith(b"%PDF"):
+        parsed = extract_pdf_text(data)
+        text = parsed.text
+        label = f"{name} ({parsed.pages} page PDF)"
+    else:
+        text = sanitize_document_text(data.decode("utf-8", errors="ignore"))
+        label = f"{name} ({content_type}, {len(data)} bytes)"
+    if not text.strip():
+        text = "No readable text could be extracted from this file. Use the filename/type as context and ask the learner for details if needed."
+    return f"File: {label}\n{text[:6000]}"
+
+
+async def _uploaded_context(files: list[UploadFile]) -> str:
+    chunks = []
+    for file in files[:6]:
+        chunks.append(await _read_upload(file))
+    return "\n\n---\n\n".join(chunks)
+
+
 def _complete(system: str, user: str, academic: bool) -> str:
     client = LLMJSONClient(max_tokens=2200)
     if not should_use_local_ai() and client.available:
@@ -64,17 +87,24 @@ def _complete(system: str, user: str, academic: bool) -> str:
 
 
 @router.post("/academic", response_model=ChatResponse)
-async def academic_chat(student_id: str = Form(...), message: str = Form(""), history: str = Form("[]"), file: UploadFile | None = File(None), db: Session = Depends(get_db)) -> ChatResponse:
+async def academic_chat(
+    student_id: str = Form(...),
+    message: str = Form(""),
+    history: str = Form("[]"),
+    file: UploadFile | None = File(None),
+    files: list[UploadFile] | None = File(None),
+    db: Session = Depends(get_db),
+) -> ChatResponse:
     if db.get(Student, student_id) is None:
         raise HTTPException(status_code=404, detail="Student not found.")
-    file_text = ""
-    if file:
-        data = await file.read()
-        file_text = extract_pdf_text(data).text if "pdf" in (file.content_type or "") else data.decode("utf-8", errors="ignore")
+    uploads = [item for item in (files or []) if item.filename]
+    if file and file.filename:
+        uploads.append(file)
+    file_text = await _uploaded_context(uploads) if uploads else ""
     if _is_coach(message) and not _is_academic(message) and not file_text.strip():
         return ChatResponse(answer="This sounds emotional or motivational. Please switch to Motivation coach so EduAgent can support you in the right mode.")
     system = "You are EduAgent's academic solver. Answer the exact academic/coding question. For code, provide working code, explanation, complexity, and edge cases."
-    prompt = f"Recent conversation:\n{_format_history(_history(history))}\n\nCurrent question:\n{message}\n\nUploaded context:\n{file_text[:8000]}"
+    prompt = f"Recent conversation:\n{_format_history(_history(history))}\n\nCurrent question:\n{message or 'Analyze the uploaded file(s).'}\n\nUploaded context:\n{file_text[:12000]}"
     return ChatResponse(answer=_complete(system, prompt, academic=True))
 
 

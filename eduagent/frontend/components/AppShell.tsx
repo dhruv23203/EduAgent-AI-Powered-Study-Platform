@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { BarChart3, BookOpenCheck, BriefcaseBusiness, GraduationCap, LayoutDashboard, LogOut, MessageSquareText, Moon, PenSquare, Plus, Repeat2, Sun } from "lucide-react";
-import { currentUserFromStorage, getMe, getUsage, logout, UsageResponse, UserProfile } from "@/lib/api";
+import { currentUserFromStorage, getMe, getProgress, getUsage, logout, RewardSummary, UsageResponse, UserProfile } from "@/lib/api";
 
 const items = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -19,6 +19,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [user, setUser] = useState<UserProfile | null>(null);
+  const [planRewards, setPlanRewards] = useState<RewardSummary | null>(null);
   const [usage, setUsage] = useState<UsageResponse | null>(null);
   const [dark, setDark] = useState(false);
 
@@ -26,8 +27,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     const saved = localStorage.getItem("eduagent_theme") === "dark";
     setDark(saved);
     document.documentElement.classList.toggle("dark", saved);
-    setUser(currentUserFromStorage());
+    const storedUser = currentUserFromStorage();
+    const selectedPlanId = Number(localStorage.getItem("eduagent_selected_plan_id") || "") || null;
+    setUser(storedUser);
     getMe().then(setUser).catch(() => {});
+    if (storedUser) {
+      getProgress(storedUser.id, selectedPlanId).then((progress) => setPlanRewards(progress.rewards)).catch(() => {});
+    }
     getUsage().then(setUsage).catch(() => {});
   }, []);
 
@@ -69,8 +75,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <button onClick={toggleTheme} className="focus-ring rounded-md p-2 text-white/70 hover:bg-white/10">{dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}</button>
             </div>
             <div className="mt-4 grid grid-cols-2 gap-2">
-              <div className="rounded-md bg-white/10 p-3 text-sm"><span className="block text-white/60">Coins</span><b className="text-xl">{user?.coins ?? 0}</b></div>
-              <div className="rounded-md bg-white/10 p-3 text-sm"><span className="block text-white/60">Badges</span><b className="text-xl">{user?.badges.length ?? 0}</b></div>
+              <div className="rounded-md bg-white/10 p-3 text-sm"><span className="block text-white/60">Plan coins</span><b className="text-xl">{planRewards?.coins ?? user?.coins ?? 0}</b></div>
+              <div className="rounded-md bg-white/10 p-3 text-sm"><span className="block text-white/60">Plan badges</span><b className="text-xl">{planRewards?.badges.length ?? user?.badges.length ?? 0}</b></div>
             </div>
           </div>
           <div className="rounded-lg border border-white/15 bg-white/10 p-4">

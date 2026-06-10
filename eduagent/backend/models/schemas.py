@@ -215,6 +215,12 @@ class RevisionResponse(BaseModel):
     exam_focus: list[str]
     revision_plan: list[StudyDay]
     feedback: list[FeedbackItem] = Field(default_factory=list)
+    is_first_day: bool = False
+    message: str = ""
+    quiz_questions: list[str] = Field(default_factory=list)
+    revision_percentage: float = 0
+    quiz_accuracy: float = 0
+    total_revision_questions: int = 0
 
 
 class DailyTaskStatus(BaseModel):

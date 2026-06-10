@@ -77,6 +77,6 @@ def submit(payload: QuizSubmitRequest, db: Session = Depends(get_db)) -> QuizSub
         raise HTTPException(status_code=400, detail="No valid quiz answers were submitted.")
     total = len(rows)
     score = round((correct / total) * 100, 2)
-    rewards = reward_quiz_submission(db, payload.student_id, score, correct)
+    rewards = reward_quiz_submission(db, payload.student_id, score, correct, payload.plan_id, quiz_run_id)
     weakness = WeaknessAgent().analyse(db, payload.student_id)
     return QuizSubmitResponse(score=score, correct=correct, wrong=total - correct, explanations=rows, updated_weak_areas=weakness.weak_topics, rewards=rewards)

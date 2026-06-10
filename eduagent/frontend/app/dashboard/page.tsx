@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
   ArrowRight,
+  BarChart3,
   BookOpenCheck,
+  Brain,
   CalendarClock,
   CheckCircle2,
   Circle,
@@ -47,12 +49,12 @@ const quotes = [
   "The streak is built one focused session at a time."
 ];
 
-function progressCacheKey(studentId: string) {
-  return `eduagent_progress_${studentId}`;
+function progressCacheKey(studentId: string, planId?: number | null) {
+  return `eduagent_progress_${studentId}_${planId || "all"}`;
 }
 
-function readCachedProgress(studentId: string): ProgressResponse | null {
-  const raw = typeof window !== "undefined" ? localStorage.getItem(progressCacheKey(studentId)) : null;
+function readCachedProgress(studentId: string, planId?: number | null): ProgressResponse | null {
+  const raw = typeof window !== "undefined" ? localStorage.getItem(progressCacheKey(studentId, planId)) : null;
   if (!raw) return null;
   try {
     return JSON.parse(raw) as ProgressResponse;
@@ -61,8 +63,8 @@ function readCachedProgress(studentId: string): ProgressResponse | null {
   }
 }
 
-function writeCachedProgress(studentId: string, data: ProgressResponse) {
-  localStorage.setItem(progressCacheKey(studentId), JSON.stringify(data));
+function writeCachedProgress(studentId: string, planId: number | null | undefined, data: ProgressResponse) {
+  localStorage.setItem(progressCacheKey(studentId, planId), JSON.stringify(data));
 }
 
 export default function DashboardPage() {
@@ -92,7 +94,7 @@ export default function DashboardPage() {
     setStudentId(user.id);
     setActivePlanId(planId);
     setQuote(quotes[Math.floor(Math.random() * quotes.length)]);
-    const cached = readCachedProgress(user.id);
+    const cached = readCachedProgress(user.id, planId);
     if (cached) setProgress(cached);
     getStudyPlan(user.id, planId)
       .then((detail) => {
@@ -101,10 +103,10 @@ export default function DashboardPage() {
         localStorage.setItem("eduagent_selected_plan_id", String(planId));
       })
       .finally(() => setLoadingPlan(false));
-    getProgress(user.id)
+    getProgress(user.id, planId)
       .then((data) => {
         setProgress(data);
-        writeCachedProgress(user.id, data);
+        writeCachedProgress(user.id, planId, data);
       })
       .finally(() => setLoadingProgress(false));
     getDailyTask(user.id, todayIso(), planId)
@@ -117,10 +119,10 @@ export default function DashboardPage() {
     const updated = await completeTask(studentId, dailyTask.date, type, dailyTask.topic, activePlanId);
     setDailyTask(updated);
     setLoadingProgress(true);
-    const latest = await getProgress(studentId).catch(() => null);
+    const latest = await getProgress(studentId, activePlanId).catch(() => null);
     if (latest) {
       setProgress(latest);
-      writeCachedProgress(studentId, latest);
+      writeCachedProgress(studentId, activePlanId, latest);
     }
     setLoadingProgress(false);
   }
@@ -185,6 +187,11 @@ export default function DashboardPage() {
             <Link href={`/quiz?fresh=${Date.now()}`} className="dashboard-action-primary">
               Start quiz <ArrowRight className="h-4 w-4" />
             </Link>
+            {studentId ? (
+              <a href={`${API_URL}/api/export/studyplan/${studentId}${activePlanId ? `?plan_id=${activePlanId}` : ""}`} className="dashboard-action-secondary">
+                <Download className="h-4 w-4" /> Download plan
+              </a>
+            ) : null}
             <Link href="/plans" className="dashboard-action-secondary">
               Change plan
             </Link>
@@ -268,14 +275,15 @@ export default function DashboardPage() {
           </div>
           {studentId ? (
             <div className="mt-5 grid gap-2">
-              <a href={`${API_URL}/api/export/studyplan/${studentId}`} className="focus-ring inline-flex items-center gap-2 rounded-md border border-ink/10 px-3 py-2 text-sm font-bold hover:text-fern dark:border-white/10">
-                <Download className="h-4 w-4 text-fern" /> Study plan TXT
+              <a href={`${API_URL}/api/export/studyplan/${studentId}${activePlanId ? `?plan_id=${activePlanId}` : ""}`} className="focus-ring inline-flex items-center gap-2 rounded-md border border-ink/10 px-3 py-2 text-sm font-bold hover:text-fern dark:border-white/10">
+                <Download className="h-4 w-4 text-fern" /> Complete day-by-day plan
               </a>
-              <a href={`${API_URL}/api/export/flashcards/${studentId}`} className="focus-ring inline-flex items-center gap-2 rounded-md border border-ink/10 px-3 py-2 text-sm font-bold hover:text-fern dark:border-white/10">
+              <a href={`${API_URL}/api/export/flashcards/${studentId}${activePlanId ? `?plan_id=${activePlanId}` : ""}`} className="focus-ring inline-flex items-center gap-2 rounded-md border border-ink/10 px-3 py-2 text-sm font-bold hover:text-fern dark:border-white/10">
                 <Download className="h-4 w-4 text-fern" /> Flashcards CSV
               </a>
             </div>
           ) : null}
+          <RevisionStatsCard progress={progress} completionPercent={completionPercent} loading={loadingProgress && !progress} />
         </section>
       </section>
 
@@ -375,4 +383,53 @@ function Stat({ icon: Icon, label, value, loading = false }: { icon: LucideIcon;
       <span className="font-bold">{loading ? <Loader2 className="h-4 w-4 animate-spin text-fern" /> : value}</span>
     </div>
   );
+}
+
+function RevisionStatsCard({ progress, completionPercent, loading }: { progress: ProgressResponse | null; completionPercent: number; loading: boolean }) {
+  const stats = revisionStats(progress);
+  return (
+    <div className="mt-5 rounded-lg border border-ink/10 bg-[#f8faf9] p-4 dark:border-white/10 dark:bg-white/5">
+      <div className="flex items-start gap-3">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-fern/10 text-fern dark:bg-emerald-200/10 dark:text-emerald-200">
+          <Brain className="h-5 w-5" />
+        </span>
+        <div>
+          <p className="section-kicker">Revision stats</p>
+          <h3 className="mt-1 font-black">Today and quiz health</h3>
+        </div>
+      </div>
+      {loading ? (
+        <div className="mt-4 flex items-center gap-2 text-sm font-bold text-ink/55 dark:text-white/55"><Loader2 className="h-4 w-4 animate-spin text-fern" /> Loading revision stats...</div>
+      ) : (
+        <div className="mt-4 grid gap-3">
+          <Stat icon={Repeat2} label="Today lane" value={`${completionPercent}%`} />
+          <Stat icon={Brain} label="Revision needed" value={`${stats.revisionNeeded}%`} />
+          <Stat icon={BarChart3} label="Revision quiz accuracy" value={`${stats.quizAccuracy}%`} />
+          <Stat icon={ClipboardList} label="Revision questions" value={stats.revisionQuestions} />
+          <div className="rounded-md border border-ink/10 bg-white p-3 text-xs font-semibold leading-5 text-ink/60 dark:border-white/10 dark:bg-[#101923] dark:text-white/60">
+            {stats.mistakes
+              ? `${stats.mistakes} mistake${stats.mistakes === 1 ? "" : "s"} are feeding today's revision focus.`
+              : "Take a quiz and mistakes will turn into revision targets here."}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function revisionStats(progress: ProgressResponse | null) {
+  if (!progress) return { revisionNeeded: 0, quizAccuracy: 0, revisionQuestions: 0, mistakes: 0 };
+  const weak = new Set(progress.weak_areas);
+  const weakHistory = progress.history.filter((item) => weak.has(String(item.topic)));
+  const total = weakHistory.reduce((sum, item) => sum + Number(item.total || 0), 0);
+  const correct = weakHistory.reduce((sum, item) => sum + Number(item.correct || 0), 0);
+  const quizAccuracy = total ? Math.round((correct / total) * 100) : Math.round(progress.overall_accuracy || 0);
+  const mistakes = progress.mistakes.reduce((sum, item) => sum + item.mistakes, 0);
+  const revisionNeeded = progress.total_questions_attempted ? Math.min(100, Math.max(0, 100 - quizAccuracy)) : 0;
+  return {
+    revisionNeeded,
+    quizAccuracy,
+    revisionQuestions: progress.total_questions_attempted ? Math.max(10, mistakes || progress.weak_areas.length * 2 || 10) : 0,
+    mistakes,
+  };
 }

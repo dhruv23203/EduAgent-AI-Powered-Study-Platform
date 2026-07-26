@@ -311,14 +311,27 @@ class ChatResponse(BaseModel):
     plan_updates: list[str] = Field(default_factory=list)
 
 
-class CareerPath(BaseModel):
-    role: str
-    match_score: int = Field(ge=0, le=100)
-    matching_skills: list[str]
-    certifications: list[str]
-    companies: list[str]
-    avg_salary_lpa: str
+class SavedChatMessage(ChatTurn):
+    id: str
+    plan_updates: list[str] = Field(default_factory=list)
+    attachments: list[str] = Field(default_factory=list)
 
 
-class CareerResponse(BaseModel):
-    careers: list[CareerPath]
+class ChatThreadSaveRequest(BaseModel):
+    id: str
+    student_id: str
+    mode: Literal["academic", "coach"]
+    title: str = Field(min_length=1, max_length=100)
+    messages: list[SavedChatMessage]
+
+
+class ChatThreadSummary(BaseModel):
+    id: str
+    mode: Literal["academic", "coach"]
+    title: str
+    updated_at: datetime
+    message_count: int
+
+
+class ChatThreadDetail(ChatThreadSummary):
+    messages: list[SavedChatMessage]

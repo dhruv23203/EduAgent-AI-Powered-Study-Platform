@@ -29,6 +29,10 @@ def _migrate_sqlite() -> None:
     if not DATABASE_URL.startswith("sqlite"):
         return
     with engine.begin() as connection:
+        student_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(students)")).fetchall()}
+        for column in ("syllabus_filename", "notes_filename"):
+            if column not in student_columns:
+                connection.execute(text(f"ALTER TABLE students ADD COLUMN {column} TEXT"))
         for table in ("quiz_questions", "quiz_attempts", "study_task_completions"):
             columns = {row[1] for row in connection.execute(text(f"PRAGMA table_info({table})")).fetchall()}
             if "plan_id" not in columns:

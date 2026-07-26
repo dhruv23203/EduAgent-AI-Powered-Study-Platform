@@ -1,0 +1,1 @@
+{"content": "A stack is a linear data structure that follows the Last\u2011In\u2011First\u2011Out (LIFO) principle, allowing insertions and deletions only at one end called the top.  \nTypical operations are **push** (add an element), **pop** (remove the top element), and **peek** (inspect the top without removing it)."}

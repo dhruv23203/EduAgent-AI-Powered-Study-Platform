@@ -18,6 +18,14 @@ CURRICULUM_HEADER_PATTERNS = {
     "exam duration", "course outcome", "course outcomes", "learning outcome", "learning outcomes",
     "course objective", "course objectives", "upon completing", "students will be able",
     "student will be able", "maximum duration", "end semester", "internal assessment",
+    "students droppers", "class xi", "class xii", "target audience", "course syllabus",
+    "complete syllabus", "assessment blueprint", "exam pattern", "marks distribution",
+    "topics covered", "learning set", "topic wise notes", "course overview",
+}
+
+NON_TOPIC_NAMES = {
+    "field", "value", "easy", "medium", "hard", "beginner", "intermediate", "advanced",
+    "syllabus", "course syllabus", "topics covered", "course overview", "exam pattern",
 }
 
 
@@ -45,6 +53,18 @@ def looks_like_pdf_noise(value: str) -> bool:
     if not compact:
         return True
     if any(pattern in compact for pattern in CURRICULUM_HEADER_PATTERNS):
+        return True
+    if compact in NON_TOPIC_NAMES:
+        return True
+    if re.match(r"^\d+[.)]?\s*(understand|analyse|analyze|design|implement|apply|explain|describe)\b", compact):
+        return True
+    if re.search(r"\b(students?|droppers?|aspirants?)\b", compact) and not re.search(r"\b(data|database|algorithm)\b", compact):
+        return True
+    if re.fullmatch(r"[a-z]{2,5}", compact) and value.strip().isupper():
+        return True
+    if re.fullmatch(r"[a-z]{2,8}[- ]?\d{2,4}", compact):
+        return True
+    if "pattern" in compact and any(token in compact for token in ("jee", "exam", "paper", "main", "advanced")):
         return True
     if re.fullmatch(r"\d+(?:\.\d+)?\s*(?:hours?|hrs?)", compact):
         return True

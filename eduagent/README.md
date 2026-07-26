@@ -1,12 +1,17 @@
 # EduAgent
 
-EduAgent is a FastAPI + Next.js study platform with login, study plans, quizzes, progress tracking, revision, career guidance, rewards, file upload, and AI-backed chat features.
+EduAgent is a FastAPI + Next.js study platform with login, study plans, quizzes, progress tracking, revision, rewards, file upload, and AI-backed chat features.
 
 ## Tech Stack
 
 - Backend: Python, FastAPI, Uvicorn, SQLAlchemy, SQLite
 - Frontend: Next.js 14, React 18, TypeScript, Tailwind CSS
 - AI provider: Groq-compatible chat completion API through `backend/agents/llm.py`
+- Vector memory: student-isolated local embeddings stored in SQLite (no extra service required)
+
+Uploaded syllabus/notes are chunked and indexed for similarity retrieval. Academic
+chat also recalls relevant earlier academic exchanges. Set `VECTOR_MEMORY_ENABLED=false`
+in `backend/.env` to disable retrieval and retain the original behavior.
 
 ## Project Structure
 
@@ -86,6 +91,8 @@ If one Groq key reaches its rate limit, EduAgent automatically tries the next co
 ```text
 GROQ_API_KEYS=groq_key_one,groq_key_two
 ```
+
+The default Groq text model is `openai/gpt-oss-120b`. Image-capable requests use `qwen/qwen3.6-27b`.
 
 Run the backend:
 

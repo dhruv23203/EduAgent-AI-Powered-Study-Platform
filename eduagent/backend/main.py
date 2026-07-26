@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from agents.llm import get_usage_status
 from db.database import init_db
-from routers import auth, career, chat, export, progress, quiz, revision, rewards, study, tasks, upload
+from routers import auth, chat, export, progress, quiz, revision, rewards, study, tasks, upload
 
 load_dotenv()
 
@@ -56,4 +56,3 @@ app.include_router(rewards.router)
 app.include_router(tasks.router)
 app.include_router(chat.router)
 app.include_router(export.router)
-app.include_router(career.router)

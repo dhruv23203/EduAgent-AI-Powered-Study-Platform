@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { BarChart3, BookOpenCheck, BriefcaseBusiness, GraduationCap, LayoutDashboard, LogOut, MessageSquareText, Moon, PenSquare, Plus, Repeat2, Sun } from "lucide-react";
+import { BarChart3, BookOpenCheck, GraduationCap, LayoutDashboard, LogOut, MessageSquareText, Moon, PenSquare, Plus, Repeat2, Sun } from "lucide-react";
 import { currentUserFromStorage, getMe, getProgress, getUsage, logout, RewardSummary, UsageResponse, UserProfile } from "@/lib/api";
 
 const items = [
@@ -11,15 +11,14 @@ const items = [
   { href: "/quiz", label: "Quiz", icon: PenSquare },
   { href: "/revision", label: "Revision", icon: Repeat2 },
   { href: "/progress", label: "Progress", icon: BarChart3 },
-  { href: "/chat", label: "Chat", icon: MessageSquareText },
-  { href: "/career", label: "Career", icon: BriefcaseBusiness }
+  { href: "/chat", label: "Chat", icon: MessageSquareText }
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [user, setUser] = useState<UserProfile | null>(null);
-  const [planRewards, setPlanRewards] = useState<RewardSummary | null>(null);
+  const [planRewards, setPlanRewards] = useState<RewardSummary | null | undefined>(undefined);
   const [usage, setUsage] = useState<UsageResponse | null>(null);
   const [dark, setDark] = useState(false);
 
@@ -27,15 +26,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     const saved = localStorage.getItem("eduagent_theme") === "dark";
     setDark(saved);
     document.documentElement.classList.toggle("dark", saved);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
     const storedUser = currentUserFromStorage();
     const selectedPlanId = Number(localStorage.getItem("eduagent_selected_plan_id") || "") || null;
     setUser(storedUser);
-    getMe().then(setUser).catch(() => {});
+    setPlanRewards(undefined);
+    getMe().then((profile) => { if (!cancelled) setUser(profile); }).catch(() => {});
     if (storedUser) {
-      getProgress(storedUser.id, selectedPlanId).then((progress) => setPlanRewards(progress.rewards)).catch(() => {});
+      getProgress(storedUser.id, selectedPlanId).then((progress) => { if (!cancelled) setPlanRewards(progress.rewards); }).catch(() => { if (!cancelled) setPlanRewards(null); });
+    } else {
+      setPlanRewards(null);
     }
     getUsage().then(setUsage).catch(() => {});
-  }, []);
+    return () => { cancelled = true; };
+  }, [pathname]);
 
   function toggleTheme() {
     const next = !dark;
@@ -75,13 +82,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <button onClick={toggleTheme} className="focus-ring rounded-md p-2 text-white/70 hover:bg-white/10">{dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}</button>
             </div>
             <div className="mt-4 grid grid-cols-2 gap-2">
-              <div className="rounded-md bg-white/10 p-3 text-sm"><span className="block text-white/60">Plan coins</span><b className="text-xl">{planRewards?.coins ?? user?.coins ?? 0}</b></div>
-              <div className="rounded-md bg-white/10 p-3 text-sm"><span className="block text-white/60">Plan badges</span><b className="text-xl">{planRewards?.badges.length ?? user?.badges.length ?? 0}</b></div>
+              <div className="rounded-md bg-white/10 p-3 text-sm"><span className="block text-white/60">Plan coins</span><b className="text-xl">{planRewards === undefined ? "—" : planRewards?.coins ?? 0}</b></div>
+              <div className="rounded-md bg-white/10 p-3 text-sm"><span className="block text-white/60">Plan badges</span><b className="text-xl">{planRewards === undefined ? "—" : planRewards?.badges.length ?? 0}</b></div>
             </div>
           </div>
           <div className="rounded-lg border border-white/15 bg-white/10 p-4">
             <p className="font-black">AI budget</p>
-            <p className="mt-2 text-sm text-white/70">{usage ? `${usage.provider || "AI"} ${usage.requests_used}/${usage.daily_limit} requests used today.` : "Budget loading..."}</p>
+            <p className="mt-2 text-sm text-white/70">{usage ? `${usage.requests_used} of ${usage.daily_limit} API requests used today (${usage.date}).` : "Budget loading..."}</p>
+            {usage ? <p className="mt-1 text-xs font-semibold text-white/55">Same daily budget for every plan · {usage.requests_remaining} remaining</p> : null}
             {usage?.api_keys_configured ? (
               <p className="mt-2 text-xs font-semibold leading-5 text-white/55">
                 Key {usage.active_key_slot || 1} active of {usage.api_keys_configured}. {usage.limited_key_slots?.length ? `Cooling: ${usage.limited_key_slots.join(", ")}.` : "Failover ready."}

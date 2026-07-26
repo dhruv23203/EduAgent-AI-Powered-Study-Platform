@@ -5,6 +5,7 @@ from agents.fallbacks import sanitize_document_text
 from db.database import get_db
 from db.models import Student
 from models.schemas import UploadResponse
+from memory.store import index_text
 from utils.pdf_parser import extract_pdf_text
 
 router = APIRouter(prefix="/api/upload", tags=["upload"])
@@ -33,8 +34,12 @@ async def upload_pdf(kind: str, student_id: str = Form(...), file: UploadFile = 
         )
     if kind == "syllabus":
         student.syllabus_text = text
+        student.syllabus_filename = file.filename or ""
     else:
         student.notes_text = text
+        student.notes_filename = file.filename or ""
     db.add(student)
     db.commit()
+    # Replaces the previous vectors for this source while preserving the raw text.
+    index_text(db, student_id, text, kind, source_id=kind)
     return UploadResponse(success=True, pages=parsed.pages, preview=text[:700])

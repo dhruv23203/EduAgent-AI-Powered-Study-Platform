@@ -15,6 +15,29 @@ DEFAULT_TOPICS = [
     ("DBMS and SQL", ["Normalization", "Joins", "Transactions"]),
 ]
 
+CONCEPT_CATALOG: list[tuple[str, list[str]]] = [
+    ("Arrays", ["array", "arrays", "two pointer", "sliding window"]),
+    ("Linked Lists", ["linked list", "singly linked", "doubly linked"]),
+    ("Stacks and Queues", ["stack", "stacks", "queue", "queues"]),
+    ("Trees", ["binary tree", "binary search tree", "tree traversal", "trees"]),
+    ("Graphs", ["graph traversal", "breadth first", "depth first", "graphs"]),
+    ("Sorting and Searching", ["sorting", "searching", "binary search", "merge sort", "quick sort"]),
+    ("Dynamic Programming", ["dynamic programming", "memoization", "tabulation"]),
+    ("Algorithm Complexity", ["time complexity", "space complexity", "big o", "complexity analysis"]),
+    ("Database Fundamentals", ["database management", "dbms architecture", "data models"]),
+    ("Relational Model and Algebra", ["relational model", "relational algebra", "relational calculus"]),
+    ("SQL", [" sql ", "structured query language", "ddl", "dml", "subqueries"]),
+    ("Normalization", ["normalization", "normalisation", "functional dependency", "normal form"]),
+    ("Transactions and Concurrency", ["transaction", "acid", "concurrency control", "serializability", "locking"]),
+    ("Indexing and Query Processing", ["indexing", "b tree", "b+ tree", "query processing", "query optimization"]),
+    ("Sets and Relations", ["sets", "relations", "functions"]),
+    ("Algebra", ["quadratic", "sequence", "series", "binomial", "permutation", "combination"]),
+    ("Calculus", ["limits", "continuity", "differentiation", "integration", "derivative"]),
+    ("Coordinate Geometry", ["coordinate geometry", "straight line", "circle", "parabola", "ellipse", "hyperbola"]),
+    ("Vectors and 3D Geometry", ["vectors", "three dimensional", "3d geometry"]),
+    ("Probability and Statistics", ["probability", "statistics", "random variable"]),
+]
+
 SYSTEM_PLAN_PROMPT = """You create practical exam study plans as JSON only.
 Return one JSON object with keys: topics, plan.
 topics is an array of objects with name, subtopics, weightage, difficulty, estimated_hours.
@@ -22,9 +45,72 @@ plan is an array of days. Each day has day, date, sessions. Each session has top
 Use the learner's syllabus and notes. Ignore PDF object syntax, page metadata, font names, broken encodings, headers, footers, and duplicated extraction artifacts.
 Every day should contain a concrete daily topic, important concepts, most-asked practice, and quiz revision."""
 
+SYSTEM_TOPIC_PROMPT = """Extract academic topics from the supplied document text.
+Return only a JSON array of objects with: name, subtopics, weightage, difficulty, estimated_hours.
+Names must be concrete concepts explicitly supported by the document, such as Arrays, Trees, Normalization, or Transactions.
+Never use Easy, Medium, Hard, Beginner, Intermediate, Advanced, Unit, Module, or Day as a topic name.
+Put difficulty only in the difficulty field. Do not invent a different academic subject."""
+
+INVALID_TOPIC_NAMES = {"easy", "medium", "hard", "beginner", "intermediate", "advanced", "unit", "module", "day"}
+GENERIC_SUBJECT_NAMES = {
+    "data structures algorithms", "data structures and algorithms", "database management systems",
+    "dbms", "jee mathematics", "mathematics", "computer science", "course syllabus",
+}
+
+
+def _meaningful_topic_name(value: str) -> bool:
+    clean = clean_topic_name(value).strip().lower()
+    numbered_intro = bool(re.match(r"^(?:unit\s*)?\d+(?:\.\d+)*\s+(?:introduction|overview)\b", clean))
+    return len(clean) >= 3 and not numbered_intro and clean not in INVALID_TOPIC_NAMES and clean not in GENERIC_SUBJECT_NAMES and not looks_like_pdf_noise(clean)
+
+
+def is_concrete_topic(value: str) -> bool:
+    return _meaningful_topic_name(value)
+
+
+def extract_topics_with_llm(syllabus: str, notes: str) -> list[dict]:
+    """Use Groq once per unique document (the LLM client cache avoids repeat cost)."""
+    source = sanitize_document_text(f"{syllabus}\n{notes}")
+    client = LLMJSONClient(max_tokens=2500)
+    if not source or not client.available:
+        return extract_topics(syllabus, notes)
+    prompt = f"Document text:\n{source[:12000]}\n\nExtract at most 12 meaningful topics in document order."
+    try:
+        raw = client.complete_json(SYSTEM_TOPIC_PROMPT, prompt, temperature=0.1)
+        if not isinstance(raw, list):
+            return extract_topics(syllabus, notes)
+        normalized = _normalize_topic_rows(raw, daily_hours=2)
+        return normalized or extract_topics(syllabus, notes)
+    except Exception:
+        return extract_topics(syllabus, notes)
+
+
+def _normalize_topic_rows(rows: list, daily_hours: int) -> list[dict]:
+    normalized = []
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        name = clean_topic_name(str(item.get("name") or ""))
+        if not _meaningful_topic_name(name):
+            continue
+        subtopics = [clean_topic_name(str(value)) for value in item.get("subtopics", []) if _meaningful_topic_name(str(value))]
+        normalized.append({
+            "name": name,
+            "subtopics": subtopics or [name],
+            "weightage": float(item.get("weightage") or 10),
+            "difficulty": item.get("difficulty") if item.get("difficulty") in {"Easy", "Medium", "Hard"} else "Medium",
+            "estimated_hours": max(0.5, float(item.get("estimated_hours") or daily_hours)),
+        })
+        if len(normalized) >= 12:
+            break
+    return normalized
+
 
 def extract_topics(syllabus: str, notes: str) -> list[dict]:
     text = sanitize_document_text(f"{syllabus}\n{notes}")
+    catalog_topics = _catalog_topics(text)
+    if catalog_topics:
+        return catalog_topics
     candidates: list[str] = []
     for line in text.splitlines():
         line = clean_topic_name(line)
@@ -41,7 +127,7 @@ def extract_topics(syllabus: str, notes: str) -> list[dict]:
     for item in candidates:
         parts = re.split(r"[:,-]", item, maxsplit=1)
         topic = clean_topic_name(parts[0])
-        if topic.lower() in seen or len(topic) < 3 or looks_like_pdf_noise(topic):
+        if topic.lower() in seen or not _meaningful_topic_name(topic):
             continue
         seen.add(topic.lower())
         subtopic = clean_topic_name(parts[1]) if len(parts) > 1 else topic
@@ -61,19 +147,40 @@ def extract_topics(syllabus: str, notes: str) -> list[dict]:
     return topics or [{"name": topic, "subtopics": subs, "weightage": 10, "difficulty": "Medium", "estimated_hours": 2} for topic, subs in DEFAULT_TOPICS]
 
 
+def _catalog_topics(text: str) -> list[dict]:
+    haystack = f" {text.lower()} "
+    matches = []
+    for name, keywords in CONCEPT_CATALOG:
+        hits = [keyword.strip() for keyword in keywords if keyword in haystack]
+        if hits:
+            matches.append({
+                "name": name,
+                "subtopics": [hit.title() for hit in hits[:4]],
+                "weightage": 10,
+                "difficulty": "Medium",
+                "estimated_hours": 2,
+            })
+    if matches:
+        weight = 100 / len(matches)
+        for item in matches:
+            item["weightage"] = weight
+    return matches[:12]
+
+
 def generate_study_plan(syllabus: str, notes: str, exam_date: date, daily_hours: int, max_days: int = 365) -> dict:
     today = date.today()
     days_until_exam = max(1, (exam_date - today).days + 1)
     total_days = days_until_exam if max_days <= 0 else min(max_days, days_until_exam)
     syllabus = sanitize_document_text(syllabus)
     notes = sanitize_document_text(notes)
-    groq_payload = _generate_groq_plan(syllabus, notes, exam_date, daily_hours, total_days)
+    extracted_topics = extract_topics_with_llm(syllabus, notes)
+    groq_payload = _generate_groq_plan(syllabus, notes, exam_date, daily_hours, total_days, extracted_topics)
     if groq_payload:
         return groq_payload
     return _generate_local_plan(syllabus, notes, today, daily_hours, total_days)
 
 
-def _generate_groq_plan(syllabus: str, notes: str, exam_date: date, daily_hours: int, total_days: int) -> dict | None:
+def _generate_groq_plan(syllabus: str, notes: str, exam_date: date, daily_hours: int, total_days: int, extracted_topics: list[dict] | None = None) -> dict | None:
     client = LLMJSONClient(max_tokens=6000)
     if not client.available:
         return None
@@ -84,6 +191,7 @@ def _generate_groq_plan(syllabus: str, notes: str, exam_date: date, daily_hours:
         f"Total plan days in the app: {total_days}\nDaily rows to generate now: {model_days}\nDaily study hours: {daily_hours}\n\n"
         f"Cleaned syllabus text:\n{syllabus[:7000] or 'No readable syllabus uploaded.'}\n\n"
         f"Cleaned notes text:\n{notes[:7000] or 'No readable notes uploaded.'}\n\n"
+        f"Validated extracted topics (use these for daily topic names):\n{extracted_topics or []}\n\n"
         "Rules:\n"
         "- Generate exactly Daily rows to generate now, dated consecutively from Today.\n"
         "- Keep each day focused on one main topic/subtopic from the syllabus or notes.\n"
@@ -97,32 +205,14 @@ def _generate_groq_plan(syllabus: str, notes: str, exam_date: date, daily_hours:
         raw = client.complete_json(SYSTEM_PLAN_PROMPT, prompt, temperature=0.35)
         if not isinstance(raw, dict):
             return None
-        return _normalize_plan_payload(raw, today, daily_hours, total_days, extract_topics(syllabus, notes))
+        return _normalize_plan_payload(raw, today, daily_hours, total_days, extracted_topics or extract_topics(syllabus, notes))
     except Exception:
         return None
 
 
 def _normalize_plan_payload(raw: dict, today: date, daily_hours: int, total_days: int, fallback_topics: list[dict] | None = None) -> dict:
     topics = raw.get("topics") if isinstance(raw.get("topics"), list) else []
-    normalized_topics = []
-    for item in topics:
-        if not isinstance(item, dict):
-            continue
-        name = clean_topic_name(str(item.get("name") or "Core Concepts"))
-        if looks_like_pdf_noise(name):
-            continue
-        subtopics = [clean_topic_name(str(value)) for value in item.get("subtopics", []) if str(value).strip() and not looks_like_pdf_noise(str(value))]
-        normalized_topics.append(
-            {
-                "name": name,
-                "subtopics": subtopics or [name],
-                "weightage": float(item.get("weightage") or 10),
-                "difficulty": item.get("difficulty") if item.get("difficulty") in {"Easy", "Medium", "Hard"} else "Medium",
-                "estimated_hours": max(0.5, float(item.get("estimated_hours") or daily_hours)),
-            }
-        )
-        if len(normalized_topics) >= 12:
-            break
+    normalized_topics = _normalize_topic_rows(topics, daily_hours)
     if not normalized_topics:
         normalized_topics = fallback_topics or extract_topics("", "")
 
@@ -134,9 +224,9 @@ def _normalize_plan_payload(raw: dict, today: date, daily_hours: int, total_days
         source_session = source_sessions[0] if source_sessions and isinstance(source_sessions[0], dict) else {}
         topic = clean_topic_name(str(source_session.get("topic") or normalized_topics[index % len(normalized_topics)]["name"]))
         subtopic = clean_topic_name(str(source_session.get("subtopic") or topic))
-        if looks_like_pdf_noise(topic):
+        if not _meaningful_topic_name(topic):
             topic = normalized_topics[index % len(normalized_topics)]["name"]
-        if looks_like_pdf_noise(subtopic):
+        if not _meaningful_topic_name(subtopic):
             subtopic = topic
         focus_points = source_session.get("focus_points") if isinstance(source_session.get("focus_points"), list) else []
         focus = [str(point).strip() for point in focus_points if str(point).strip()][:4]

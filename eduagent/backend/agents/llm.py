@@ -16,11 +16,13 @@ class AgentError(RuntimeError):
 class LLMJSONClient:
     def __init__(self, max_tokens: int = 2048) -> None:
         self.provider = os.getenv("LLM_PROVIDER", "groq").lower()
-        self.model = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+        self.model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
         self.api_keys = self._load_api_keys()
         self.api_key = self.api_keys[0] if self.api_keys else ""
         self.max_tokens = max_tokens
-        self.daily_limit = int(os.getenv("LLM_DAILY_LIMIT", "100"))
+        # One application-wide budget applies to every subscription tier. The
+        # legacy name remains a fallback so existing deployments keep working.
+        self.daily_limit = int(os.getenv("AI_DAILY_REQUEST_BUDGET", os.getenv("LLM_DAILY_LIMIT", "100")))
         self.cache_enabled = os.getenv("LLM_CACHE_ENABLED", "true").lower() in {"1", "true", "yes"}
         self.cache_dir = Path(".llm_cache")
         self.cache_dir.mkdir(exist_ok=True)
@@ -80,6 +82,16 @@ class LLMJSONClient:
         cooldowns[self._key_id(key)] = (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat()
         self._write_key_state(state)
 
+    def _cooldown_minutes(self, response: requests.Response) -> int:
+        retry_after = response.headers.get("retry-after")
+        if retry_after:
+            try:
+                seconds = max(1, int(float(retry_after)))
+                return max(1, min(60, (seconds + 59) // 60))
+            except ValueError:
+                pass
+        return 45
+
     def _mark_key_active(self, index: int, state: dict[str, Any]) -> None:
         state["active_key"] = index
         self._write_key_state(state)
@@ -127,10 +139,12 @@ class LLMJSONClient:
             "date": usage["date"],
             "provider": self.provider.upper(),
             "model": self.model,
-            "vision_model": os.getenv("GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct"),
+            "vision_model": os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.6-27b"),
             "daily_limit": self.daily_limit,
             "requests_used": int(usage.get("requests_used", 0)),
             "requests_remaining": max(0, self.daily_limit - int(usage.get("requests_used", 0))),
+            "budget_scope": "all_plans",
+            "counter_scope": "groq_http_requests_today",
             "api_keys_configured": len(self.api_keys),
             "active_key_slot": int(state.get("active_key") or 0) + 1 if self.api_keys else 0,
             "limited_key_slots": limited_slots,
@@ -173,7 +187,7 @@ class LLMJSONClient:
             if data:
                 content.append({"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{data}"}})
         payload = {
-            "model": os.getenv("GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct"),
+            "model": os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.6-27b"),
             "messages": [{"role": "user", "content": content}],
             "temperature": temperature,
             "max_tokens": self.max_tokens,
@@ -211,7 +225,7 @@ class LLMJSONClient:
             last_error = response.text[:500]
             if self._is_rate_limited(response):
                 limited_slots.append(index + 1)
-                self._mark_key_limited(key, state)
+                self._mark_key_limited(key, state, self._cooldown_minutes(response))
                 continue
             raise AgentError(last_error)
         if response is None or response.status_code >= 400:
@@ -238,7 +252,10 @@ class LLMJSONClient:
         end = max(content.rfind("}"), content.rfind("]"))
         if start == -1 or end == -1:
             raise AgentError("Model did not return JSON.")
-        return json.loads(content[start : end + 1])
+        try:
+            return json.loads(content[start : end + 1])
+        except json.JSONDecodeError as exc:
+            raise AgentError("Model returned malformed JSON.") from exc
 
 
 def get_usage_status() -> dict[str, Any]:

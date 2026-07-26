@@ -27,6 +27,34 @@ class Student(Base):
     daily_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
     syllabus_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     notes_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    syllabus_filename: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notes_filename: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class VectorMemory(Base):
+    """Student-isolated text chunks and their local vector embeddings."""
+
+    __tablename__ = "vector_memories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    student_id: Mapped[str] = mapped_column(Text, ForeignKey("students.id"), index=True, nullable=False)
+    source_type: Mapped[str] = mapped_column(Text, index=True, nullable=False)
+    source_id: Mapped[str] = mapped_column(Text, index=True, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class ChatThread(Base):
+    __tablename__ = "chat_threads"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    student_id: Mapped[str] = mapped_column(Text, ForeignKey("students.id"), index=True, nullable=False)
+    mode: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    messages_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, index=True, nullable=False)
 
 
 class StudyPlan(Base):
